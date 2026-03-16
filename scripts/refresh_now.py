@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
 Manual refresh: run all collectors immediately, one by one.
-Usage: python3 scripts/refresh_now.py [--only google_trends,tiktok,...]
+
+Usage:
+  python3 scripts/refresh_now.py              # all collectors (~3.5 hrs)
+  python3 scripts/refresh_now.py --fast        # quick ones only (~45 min)
+  python3 scripts/refresh_now.py --only google_trends,tiktok
+  python3 scripts/refresh_now.py --skip etsy,alibaba
 
 Run from the project root (/opt/nichescope on VPS).
 """
@@ -98,6 +103,9 @@ COLLECTORS = {
     "analysis":           ("Niche Analysis",        run_analysis),
 }
 
+# Slow collectors skipped in --fast mode (Etsy ~82min, SimilarWeb ~50min, Alibaba ~31min)
+SLOW_COLLECTORS = {"etsy", "alibaba", "competitor_traffic", "keepa"}
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run NicheScope collectors now")
@@ -111,12 +119,20 @@ def main():
         help="Comma-separated list of collectors to skip",
         default=None,
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Quick refresh: skip slow collectors (Etsy, Alibaba, SimilarWeb, Keepa). ~45 min instead of ~3.5 hrs.",
+    )
     args = parser.parse_args()
 
     # Determine which collectors to run
     if args.only:
         selected = [c.strip() for c in args.only.split(",")]
         to_run = {k: v for k, v in COLLECTORS.items() if k in selected}
+    elif args.fast:
+        to_run = {k: v for k, v in COLLECTORS.items() if k not in SLOW_COLLECTORS}
+        logger.info("⚡ Fast mode: skipping Etsy, Alibaba, SimilarWeb, Keepa")
     elif args.skip:
         skipped = [c.strip() for c in args.skip.split(",")]
         to_run = {k: v for k, v in COLLECTORS.items() if k not in skipped}

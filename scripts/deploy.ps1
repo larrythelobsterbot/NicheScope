@@ -12,7 +12,7 @@
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("first-run", "update", "health", "backup", "nginx", "refresh", "")]
+    [ValidateSet("first-run", "update", "health", "backup", "nginx", "refresh", "refresh-fast", "")]
     [string]$Command
 )
 
@@ -396,12 +396,20 @@ fi
 # REFRESH: Run all collectors now
 # ============================================
 function Invoke-Refresh {
-    Log "Triggering manual refresh of all collectors on VPS..."
+    param([switch]$Fast)
+
+    if ($Fast) {
+        Log "Triggering FAST refresh (skipping slow collectors)..."
+        $flags = "--fast"
+    } else {
+        Log "Triggering FULL refresh of all collectors (this will take ~3.5 hrs)..."
+        $flags = ""
+    }
 
     $remoteScript = @"
 set -e
 cd ${REMOTE_DIR}
-python3 scripts/refresh_now.py
+python3 scripts/refresh_now.py ${flags}
 "@
 
     Invoke-Remote $remoteScript
@@ -419,7 +427,8 @@ switch ($Command) {
     "health"    { Invoke-HealthCheck }
     "backup"    { Invoke-Backup }
     "nginx"     { Invoke-NginxSetup }
-    "refresh"   { Invoke-Refresh }
+    "refresh"      { Invoke-Refresh }
+    "refresh-fast" { Invoke-Refresh -Fast }
     default {
         Write-Host ""
         Write-Host "NicheScope Deployment Tool (PowerShell)" -ForegroundColor Cyan
@@ -432,7 +441,8 @@ switch ($Command) {
         Write-Host "  health      Check VPS status, DB stats, collector logs"
         Write-Host "  backup      Download database backup to local machine"
         Write-Host "  nginx       Set up or update Nginx config"
-        Write-Host "  refresh     Run all collectors immediately (manual refresh)"
+        Write-Host "  refresh       Run ALL collectors (~3.5 hrs)"
+        Write-Host "  refresh-fast  Quick refresh: skip slow ones (~45 min)"
         Write-Host ""
     }
 }
