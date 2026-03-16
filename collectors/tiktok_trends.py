@@ -110,6 +110,8 @@ def collect_tiktok_trends():
     db = get_db()
     cursor = db.cursor()
     total_collected = 0
+    consecutive_permission_errors = 0
+    MAX_PERMISSION_ERRORS = 3
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     watchlist = get_active_keywords()
@@ -128,6 +130,23 @@ def collect_tiktok_trends():
 
             hashtags = fetch_trending_hashtags(keyword)
             TIKTOK.record_request()
+
+            # Detect persistent permission errors (API access revoked)
+            if not hashtags:
+                consecutive_permission_errors += 1
+                if consecutive_permission_errors >= MAX_PERMISSION_ERRORS:
+                    logger.error(
+                        f"TikTok API returning empty results for {consecutive_permission_errors} "
+                        f"consecutive keywords. API may require authentication now. Stopping."
+                    )
+                    db.commit()
+                    db.close()
+                    return total_collected
+                time.sleep(3)
+                continue
+            else:
+                consecutive_permission_errors = 0
+
             ad_count = fetch_ad_count(keyword)
             TIKTOK.record_request()
 

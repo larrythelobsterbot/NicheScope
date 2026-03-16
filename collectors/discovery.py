@@ -77,6 +77,8 @@ def discover_from_google_categories():
 
     pytrends = TrendReq(hl='en-US', tz=480)  # HKT timezone offset
     discovered = 0
+    consecutive_errors = 0
+    MAX_CONSECUTIVE_ERRORS = 3
 
     for cat_id, cat_name in DISCOVERY_CATEGORIES.items():
         try:
@@ -92,6 +94,7 @@ def discover_from_google_categories():
 
             related = pytrends.related_topics()
             GOOGLE_TRENDS.record_request()
+            consecutive_errors = 0  # Reset on success
 
             if not related or "" not in related:
                 continue
@@ -128,8 +131,20 @@ def discover_from_google_categories():
             logger.warning("Rate limit hit during discovery. Stopping.")
             break
         except Exception as e:
-            logger.error(f"Error discovering in category {cat_name}: {e}")
-            time.sleep(5)
+            error_msg = str(e)
+            consecutive_errors += 1
+            if "429" in error_msg or "index out of range" in error_msg:
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    logger.error(
+                        f"Google blocking requests ({consecutive_errors} consecutive failures). "
+                        f"Stopping discovery. Try again later."
+                    )
+                    break
+                logger.warning(f"Google 429/error in {cat_name} ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Backing off...")
+                time.sleep(60 * (2 ** consecutive_errors))
+            else:
+                logger.error(f"Error discovering in category {cat_name}: {e}")
+                time.sleep(5)
 
     conn.commit()
     conn.close()
@@ -162,6 +177,8 @@ def discover_from_related_queries():
 
     pytrends = TrendReq(hl='en-US', tz=480)
     discovered = 0
+    consecutive_errors = 0
+    MAX_CONSECUTIVE_ERRORS = 3
 
     for category, kw_list in keywords.items():
         # Sort: productive keywords first
@@ -172,6 +189,7 @@ def discover_from_related_queries():
                 pytrends.build_payload([keyword], timeframe="today 3-m")
                 related = pytrends.related_queries()
                 GOOGLE_TRENDS.record_request()
+                consecutive_errors = 0  # Reset on success
 
                 if not related or keyword not in related:
                     continue
@@ -202,8 +220,22 @@ def discover_from_related_queries():
                 conn.close()
                 return discovered
             except Exception as e:
-                logger.error(f"Error on related queries for {keyword}: {e}")
-                time.sleep(5)
+                error_msg = str(e)
+                consecutive_errors += 1
+                if "429" in error_msg or "index out of range" in error_msg:
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                        logger.error(
+                            f"Google blocking requests ({consecutive_errors} consecutive failures). "
+                            f"Stopping related query discovery."
+                        )
+                        conn.commit()
+                        conn.close()
+                        return discovered
+                    logger.warning(f"Google 429/error for '{keyword}' ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Backing off...")
+                    time.sleep(60 * (2 ** consecutive_errors))
+                else:
+                    logger.error(f"Error on related queries for {keyword}: {e}")
+                    time.sleep(5)
 
     conn.commit()
     conn.close()

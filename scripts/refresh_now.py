@@ -12,8 +12,10 @@ Run from the project root (/opt/nichescope on VPS).
 """
 
 import argparse
+import gc
 import logging
 import os
+import sqlite3
 import sys
 import time
 
@@ -157,6 +159,10 @@ def main():
             elapsed = time.time() - start
             results[key] = ("FAIL", str(e)[:200], elapsed)
             print(f"  ✗ FAILED: {e} ({elapsed:.1f}s)")
+
+        # Force-close any lingering SQLite connections between collectors
+        gc.collect()
+        time.sleep(1)
         print()
 
     # Summary
