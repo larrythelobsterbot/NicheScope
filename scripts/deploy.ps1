@@ -41,6 +41,8 @@ function Test-SSHAvailable {
 
 function Invoke-Remote {
     param([string]$Script)
+    # Strip Windows \r characters so Linux doesn't choke on them
+    $Script = $Script -replace "`r", ""
     ssh "${VPS_USER}@${VPS_HOST}" $Script
     if ($LASTEXITCODE -ne 0) {
         Warn "Remote command exited with code $LASTEXITCODE"
@@ -132,6 +134,9 @@ cd ${REMOTE_DIR}
 echo '=== Running database migrations ==='
 python3 scripts/migrate_001_collector_health.py
 python3 scripts/init_db.py
+
+echo '=== Seeding new keywords and categories ==='
+python3 scripts/seed_watchlist.py
 
 echo '=== Installing any new Python dependencies ==='
 pip3 install -r collectors/requirements.txt --break-system-packages 2>/dev/null \
@@ -366,8 +371,8 @@ server {
 }
 "@
 
-    # Write nginx config via SSH
-    $nginxConf | ssh "${VPS_USER}@${VPS_HOST}" "cat > /etc/nginx/sites-available/nichescope"
+    # Write nginx config via SSH (strip Windows line endings)
+    ($nginxConf -replace "`r", "") | ssh "${VPS_USER}@${VPS_HOST}" "cat > /etc/nginx/sites-available/nichescope"
 
     $remoteScript = @"
 set -e
