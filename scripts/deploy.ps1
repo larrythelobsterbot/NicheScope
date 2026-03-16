@@ -8,10 +8,11 @@
 #   update      Sync code changes and restart services
 #   health      Check VPS status, DB stats, collector logs
 #   backup      Download database backup to local machine
+#   refresh     Run all collectors immediately (manual refresh)
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("first-run", "update", "health", "backup", "nginx", "")]
+    [ValidateSet("first-run", "update", "health", "backup", "nginx", "refresh", "")]
     [string]$Command
 )
 
@@ -392,6 +393,22 @@ fi
 }
 
 # ============================================
+# REFRESH: Run all collectors now
+# ============================================
+function Invoke-Refresh {
+    Log "Triggering manual refresh of all collectors on VPS..."
+
+    $remoteScript = @"
+set -e
+cd ${REMOTE_DIR}
+python3 scripts/refresh_now.py
+"@
+
+    Invoke-Remote $remoteScript
+    Log "Manual refresh complete."
+}
+
+# ============================================
 # MAIN
 # ============================================
 Test-SSHAvailable
@@ -402,6 +419,7 @@ switch ($Command) {
     "health"    { Invoke-HealthCheck }
     "backup"    { Invoke-Backup }
     "nginx"     { Invoke-NginxSetup }
+    "refresh"   { Invoke-Refresh }
     default {
         Write-Host ""
         Write-Host "NicheScope Deployment Tool (PowerShell)" -ForegroundColor Cyan
@@ -414,6 +432,7 @@ switch ($Command) {
         Write-Host "  health      Check VPS status, DB stats, collector logs"
         Write-Host "  backup      Download database backup to local machine"
         Write-Host "  nginx       Set up or update Nginx config"
+        Write-Host "  refresh     Run all collectors immediately (manual refresh)"
         Write-Host ""
     }
 }
