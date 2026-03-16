@@ -47,6 +47,10 @@ def collect_trends():
     if remaining < total_keywords:
         logger.warning(f"Rate limit: {remaining} requests remaining today, {total_keywords} keywords to process")
 
+    consecutive_429s = 0
+    MAX_CONSECUTIVE_429 = 3  # Give up after 3 consecutive 429 errors
+    base_delay = 60  # seconds between successful batches
+
     for category, keywords in watchlist.items():
         for i in range(0, len(keywords), 5):
             batch = keywords[i : i + 5]
@@ -59,8 +63,11 @@ def collect_trends():
 
                 if interest_df.empty:
                     logger.warning(f"No interest data for batch: {batch}")
-                    time.sleep(60)
+                    time.sleep(base_delay)
                     continue
+
+                # Reset 429 counter on success
+                consecutive_429s = 0
 
                 for keyword in batch:
                     if keyword not in interest_df.columns:
@@ -155,11 +162,30 @@ def collect_trends():
                 db.close()
                 return total_collected
             except Exception as e:
-                logger.error(f"Error collecting trends for {batch}: {e}")
-                time.sleep(5)
+                error_msg = str(e)
+                if "429" in error_msg:
+                    consecutive_429s += 1
+                    if consecutive_429s >= MAX_CONSECUTIVE_429:
+                        logger.error(
+                            f"Google is blocking requests ({consecutive_429s} consecutive 429s). "
+                            f"Stopping Google Trends collector. Try again in a few hours."
+                        )
+                        db.close()
+                        return total_collected
+                    # Exponential backoff: 2min, 4min, 8min...
+                    backoff = base_delay * (2 ** consecutive_429s)
+                    logger.warning(
+                        f"429 rate limit ({consecutive_429s}/{MAX_CONSECUTIVE_429}). "
+                        f"Backing off {backoff}s..."
+                    )
+                    time.sleep(backoff)
+                    continue
+                else:
+                    logger.error(f"Error collecting trends for {batch}: {e}")
+                    time.sleep(5)
 
-            logger.info("Sleeping 60s for rate limiting...")
-            time.sleep(60)
+            logger.info(f"Sleeping {base_delay}s for rate limiting...")
+            time.sleep(base_delay)
 
     db.close()
     logger.info(f"Google Trends collection complete. {total_collected} data points stored.")
