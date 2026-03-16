@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  --color-base: #08080f;
+  --color-base-light: #0f1019;
+  --color-base-card: #12121c;
+  --color-beauty: #ff6b8a;
+  --color-jewelry: #a78bfa;
+  --color-travel: #34d399;
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-bg: rgba(255, 255, 255, 0.03);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--color-base);
+  color: #e2e8f0;
+  font-family: "Outfit", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ambient gradient background */
+.ambient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(255, 107, 138, 0.05), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 20%, rgba(167, 139, 250, 0.04), transparent),
+    radial-gradient(ellipse 70% 50% at 50% 80%, rgba(52, 211, 153, 0.03), transparent),
+    var(--color-base);
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+}
+
+.glass-card-hover {
+  transition: all 0.3s ease;
+}
+
+.glass-card-hover:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Category accent colors */
+.accent-beauty {
+  color: var(--color-beauty);
+}
+.accent-jewelry {
+  color: var(--color-jewelry);
+}
+.accent-travel {
+  color: var(--color-travel);
+}
+
+.bg-beauty {
+  background-color: var(--color-beauty);
+}
+.bg-jewelry {
+  background-color: var(--color-jewelry);
+}
+.bg-travel {
+  background-color: var(--color-travel);
+}
+
+/* Glow effect for high-growth keywords */
+.glow-beauty {
+  text-shadow: 0 0 20px rgba(255, 107, 138, 0.6), 0 0 40px rgba(255, 107, 138, 0.3);
+}
+.glow-jewelry {
+  text-shadow: 0 0 20px rgba(167, 139, 250, 0.6), 0 0 40px rgba(167, 139, 250, 0.3);
+}
+.glow-travel {
+  text-shadow: 0 0 20px rgba(52, 211, 153, 0.6), 0 0 40px rgba(52, 211, 153, 0.3);
+}
+
+/* Staggered entrance animations */
+.stagger-1 { animation-delay: 0.1s; }
+.stagger-2 { animation-delay: 0.2s; }
+.stagger-3 { animation-delay: 0.3s; }
+.stagger-4 { animation-delay: 0.4s; }
+.stagger-5 { animation-delay: 0.5s; }
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Quality bar segments */
+.quality-bar {
+  display: flex;
+  gap: 2px;
+}
+.quality-segment {
+  width: 8px;
+  height: 16px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.quality-segment.filled {
+  background: var(--color-travel);
+}
+
+/* Recharts overrides */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255, 255, 255, 0.05);
+}
+.recharts-text {
+  fill: #94a3b8;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}

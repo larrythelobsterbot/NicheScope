@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+collectors/venv/
+__pycache__/
+*.pyc
+
+# Build
+frontend/.next/
+frontend/out/
+
+# Data
+data/*.db
+data/backups/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+pm2-*.json
