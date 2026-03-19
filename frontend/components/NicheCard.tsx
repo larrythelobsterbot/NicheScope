@@ -1,7 +1,7 @@
 "use client";
 
 import { NicheScore } from "@/lib/types";
-import { formatPercent, scoreToColor } from "@/lib/utils";
+import { scoreToColor } from "@/lib/utils";
 import Sparkline from "./Sparkline";
 
 interface NicheCardProps {
@@ -22,7 +22,9 @@ export default function NicheCard({
   colorMap = {},
 }: NicheCardProps) {
   const color = colorMap[score.category] || "#94a3b8";
-  const growth = score.trend_score > 50 ? score.trend_score - 50 : -(50 - score.trend_score);
+
+  // Use trend_score directly as a 0-100 metric, not a misleading "growth" derived value
+  const trendMomentum = score.trend_score;
 
   return (
     <div
@@ -57,24 +59,24 @@ export default function NicheCard({
         <Sparkline data={trendHistory} color={color} width={60} height={20} />
       </div>
 
-      {/* Score + Growth */}
+      {/* Score + Trend Strength */}
       <div className="flex items-end justify-between">
         <div>
           <div className="font-mono text-2xl font-bold" style={{ color }}>
             {score.overall_score.toFixed(0)}
           </div>
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider">
+          <div className="text-[10px] text-slate-400 uppercase tracking-wider">
             NicheScore
           </div>
         </div>
         <div className="text-right">
           <div
             className="font-mono text-sm font-medium"
-            style={{ color: growth >= 0 ? "#34D399" : "#EF4444" }}
+            style={{ color: scoreToColor(trendMomentum) }}
           >
-            {formatPercent(growth * 2)}
+            {trendMomentum.toFixed(0)}
           </div>
-          <div className="text-[10px] text-slate-500">Growth</div>
+          <div className="text-[10px] text-slate-400">Trend</div>
         </div>
       </div>
 
@@ -86,7 +88,7 @@ export default function NicheCard({
           { label: "SRC", value: score.sourcing_score },
         ].map((s) => (
           <div key={s.label}>
-            <div className="text-[9px] text-slate-500 mb-0.5">{s.label}</div>
+            <div className="text-[9px] text-slate-400 mb-0.5">{s.label}</div>
             <div className="h-1 rounded-full bg-white/5 overflow-hidden">
               <div
                 className="h-full rounded-full transition-all"

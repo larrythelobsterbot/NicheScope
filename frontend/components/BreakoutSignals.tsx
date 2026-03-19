@@ -10,7 +10,7 @@ interface BreakoutSignalsProps {
 export default function BreakoutSignals({ alerts }: BreakoutSignalsProps) {
   if (alerts.length === 0) {
     return (
-      <div className="text-slate-500 text-sm p-4">
+      <div className="text-slate-400 text-sm p-4">
         No breakout signals detected yet.
       </div>
     );
@@ -44,7 +44,7 @@ export default function BreakoutSignals({ alerts }: BreakoutSignalsProps) {
                 {alert.severity}
               </span>
               {/* Type */}
-              <span className="text-[10px] text-slate-500 uppercase">
+              <span className="text-[10px] text-slate-400 uppercase">
                 {alert.type.replace("_", " ")}
               </span>
             </div>

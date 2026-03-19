@@ -31,14 +31,18 @@ export default function CategoryFilter({
   };
 
   return (
-    <div className="flex items-center gap-2 flex-wrap" role="tablist">
+    <div
+      className="flex items-center gap-2 overflow-x-auto scrollbar-thin pb-1"
+      role="tablist"
+      style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
+    >
       <button
         onClick={() => onSelect(null)}
         role="tab"
         aria-selected={selected === null}
         tabIndex={0}
         aria-label="Show all categories"
-        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap shrink-0 ${
           selected === null
             ? "bg-white/10 text-white"
             : "bg-white/[0.03] text-slate-500 hover:text-slate-300"
@@ -58,7 +62,7 @@ export default function CategoryFilter({
             aria-selected={isActive}
             tabIndex={0}
             aria-label={`Filter by ${cat.name}`}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all capitalize ${
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all capitalize whitespace-nowrap shrink-0 ${
               isActive
                 ? "text-white"
                 : "bg-white/[0.03] text-slate-500 hover:text-slate-300"
@@ -81,7 +85,7 @@ export default function CategoryFilter({
       {onAddCategory && (
         <>
           {showAdd ? (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <input
                 type="text"
                 value={newName}
@@ -107,7 +111,7 @@ export default function CategoryFilter({
           ) : (
             <button
               onClick={() => setShowAdd(true)}
-              className="px-2.5 py-1.5 rounded-full text-xs text-slate-600 hover:text-slate-400 bg-white/[0.02] hover:bg-white/[0.05] border border-dashed border-white/10 transition-all"
+              className="px-2.5 py-1.5 rounded-full text-xs text-slate-600 hover:text-slate-400 bg-white/[0.02] hover:bg-white/[0.05] border border-dashed border-white/10 transition-all shrink-0"
             >
               + Add
             </button>
