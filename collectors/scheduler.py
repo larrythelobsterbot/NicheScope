@@ -214,81 +214,69 @@ def job_listener(event):
 
 def job_google_trends():
     logger.info("=== Google Trends collection started ===")
-    try:
-        count = collect_trends()
-        logger.info(f"Google Trends: {count} data points collected")
+    success, count, err = run_collector_job("google_trends", collect_trends)
+    if success:
         run_post_collection()
-    except Exception as e:
-        logger.error(f"Google Trends job failed: {e}", exc_info=True)
-        raise
+    return (success, count, err)
 
 
 def job_keepa():
     logger.info("=== Keepa collection started ===")
-    try:
-        count = collect_products()
-        logger.info(f"Keepa: {count} products updated")
-        anomalies = detect_anomalies()
-        for anomaly in anomalies:
-            send_price_alert(anomaly)
+    if not os.getenv("KEEPA_API_KEY"):
+        logger.warning("KEEPA_API_KEY not set; skipping this run.")
+        return (True, 0, "KEEPA_API_KEY not set")
+    success, count, err = run_collector_job("keepa", collect_products)
+    if success and count > 0:
+        try:
+            anomalies = detect_anomalies()
+            for anomaly in anomalies:
+                send_price_alert(anomaly)
+        except Exception as e:
+            logger.error(f"Post-Keepa analysis failed: {e}")
         run_post_collection()
-    except Exception as e:
-        logger.error(f"Keepa job failed: {e}", exc_info=True)
-        raise
+    return (success, count, err)
 
 
 def job_tiktok():
     logger.info("=== TikTok trends collection started ===")
-    try:
-        count = collect_tiktok_trends()
-        logger.info(f"TikTok: {count} keywords processed")
+    success, count, err = run_collector_job("tiktok", collect_tiktok_trends)
+    if success:
         run_post_collection()
-    except Exception as e:
-        logger.error(f"TikTok job failed: {e}", exc_info=True)
-        raise
+    return (success, count, err)
 
 
 def job_alibaba():
     logger.info("=== Alibaba supplier scan started ===")
-    try:
-        count = collect_alibaba_suppliers()
-        logger.info(f"Alibaba: {count} new suppliers discovered")
-    except Exception as e:
-        logger.error(f"Alibaba job failed: {e}", exc_info=True)
-        raise
+    return run_collector_job("alibaba", collect_alibaba_suppliers)
 
 
 def job_competitor_traffic():
     logger.info("=== Competitor traffic collection started ===")
-    try:
-        count = collect_competitor_traffic()
-        logger.info(f"SimilarWeb: {count} domains updated")
-    except Exception as e:
-        logger.error(f"Competitor traffic job failed: {e}", exc_info=True)
-        raise
+    return run_collector_job("competitor_traffic", collect_competitor_traffic)
 
 
 def job_daily_digest():
     logger.info("=== Daily digest job started ===")
+    if not os.getenv("TELEGRAM_BOT_TOKEN"):
+        logger.info("TELEGRAM_BOT_TOKEN not set; skipping digest.")
+        return (True, 0, None)
     try:
         send_daily_digest()
-        logger.info("Daily digest sent")
+        return (True, 1, None)
     except Exception as e:
-        logger.error(f"Daily digest job failed: {e}", exc_info=True)
-        raise
+        logger.error(f"Daily digest failed: {e}", exc_info=True)
+        return (False, 0, str(e))
 
 
 def job_weekly_analysis():
     logger.info("=== Weekly deep analysis started ===")
-    try:
+    def _wrapped():
         results = run_analysis()
         for b in results.get("breakouts", []):
             if b["severity"] == "critical":
                 send_breakout_alert(b)
-        logger.info("Weekly analysis complete")
-    except Exception as e:
-        logger.error(f"Weekly analysis failed: {e}", exc_info=True)
-        raise
+        return (True, len(results.get("breakouts", [])), None)
+    return run_collector_job("weekly_analysis", _wrapped)
 
 
 def job_telegram_poll():
@@ -301,47 +289,49 @@ def job_telegram_poll():
 
 def job_discovery_categories():
     logger.info("=== Discovery: category scan started ===")
-    try:
-        count = run_discovery()
-        logger.info(f"Discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Discovery category scan failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("discovery_categories", run_discovery)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_discovery_related():
     logger.info("=== Discovery: related queries scan started ===")
-    try:
+    def _wrapped():
         from discovery import discover_from_related_queries
-        count = discover_from_related_queries()
-        logger.info(f"Related queries discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Related queries discovery failed: {e}", exc_info=True)
-        raise
+        return discover_from_related_queries()
+    success, count, err = run_collector_job("discovery_related", _wrapped)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_reddit_discovery():
     logger.info("=== Reddit discovery started ===")
-    try:
-        count = discover_from_reddit()
-        logger.info(f"Reddit discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Reddit discovery failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("reddit_discovery", discover_from_reddit)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_etsy_discovery():
     logger.info("=== Etsy discovery started ===")
-    try:
-        count = discover_from_etsy()
-        logger.info(f"Etsy discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Etsy discovery failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("etsy_discovery", discover_from_etsy)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def run_post_collection():
@@ -380,7 +370,7 @@ def run_initial_collection_if_needed():
 # Main Scheduler
 # ============================================================
 
-def main():
+def build_scheduler() -> BlockingScheduler:
     scheduler = BlockingScheduler(timezone="Asia/Hong_Kong")
 
     # Register the job listener for health tracking
@@ -400,18 +390,15 @@ def main():
         coalesce=True,
     )
 
-    # Keepa: every 6 hours (only if API key is configured)
-    if os.getenv("KEEPA_API_KEY"):
-        scheduler.add_job(
-            job_keepa,
-            IntervalTrigger(hours=SCHEDULE["keepa"]["hours"]),
-            id="keepa",
-            name="Keepa Product Collector",
-            misfire_grace_time=1800,
-            coalesce=True,
-        )
-    else:
-        logger.info("KEEPA_API_KEY not set. Keepa collector disabled.")
+    # Keepa: every 6 hours (registered unconditionally; env checked at runtime)
+    scheduler.add_job(
+        job_keepa,
+        IntervalTrigger(hours=SCHEDULE["keepa"]["hours"]),
+        id="keepa",
+        name="Keepa Product Collector",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
 
     # TikTok: daily at 8am HKT
     scheduler.add_job(
@@ -491,22 +478,23 @@ def main():
         coalesce=True,
     )
 
-    # Daily Telegram digest: 9am HKT
-    if os.getenv("TELEGRAM_BOT_TOKEN"):
-        scheduler.add_job(
-            job_daily_digest,
-            CronTrigger(
-                hour=SCHEDULE["daily_digest"]["hour"],
-                minute=SCHEDULE["daily_digest"]["minute"],
-                timezone="Asia/Hong_Kong",
-            ),
-            id="daily_digest",
-            name="Daily Telegram Digest",
-            misfire_grace_time=600,
-            coalesce=True,
-        )
+    # Daily Telegram digest: 9am HKT (registered unconditionally; env checked at runtime)
+    scheduler.add_job(
+        job_daily_digest,
+        CronTrigger(
+            hour=SCHEDULE["daily_digest"]["hour"],
+            minute=SCHEDULE["daily_digest"]["minute"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="daily_digest",
+        name="Daily Telegram Digest",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
 
-        # Telegram command polling: every 30 seconds
+    # Telegram command polling: every 30 seconds (still startup-gated since it
+    # is not a collector job and only makes sense when a token is configured)
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
         scheduler.add_job(
             job_telegram_poll,
             IntervalTrigger(seconds=30),
@@ -514,7 +502,7 @@ def main():
             name="Telegram Command Poller",
         )
     else:
-        logger.info("TELEGRAM_BOT_TOKEN not set. Telegram features disabled.")
+        logger.info("TELEGRAM_BOT_TOKEN not set. Telegram command polling disabled.")
 
     # Weekly deep analysis: Sunday midnight HKT
     scheduler.add_job(
@@ -538,14 +526,15 @@ def main():
         name="Initial Collection Check",
     )
 
-    # Graceful shutdown
-    def shutdown(signum, frame):
-        logger.info("Shutting down scheduler...")
-        scheduler.shutdown(wait=False)
-        sys.exit(0)
+    return scheduler
 
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
+
+def main():
+    load_env_or_die(_ENV_PATH)
+    scheduler = build_scheduler()
+    run_initial_collection_if_needed()
+    signal.signal(signal.SIGINT, lambda *_: scheduler.shutdown())
+    signal.signal(signal.SIGTERM, lambda *_: scheduler.shutdown())
 
     # Startup info
     keywords = get_active_keywords()
@@ -567,6 +556,7 @@ def main():
     except Exception as e:
         logger.warning(f"Initial analysis skipped (may be empty DB): {e}")
 
+    logger.info("Scheduler starting...")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
