@@ -142,3 +142,12 @@ SIMILARWEB = RateLimiter(
     requests_per_minute=1,
     daily_limit=50               # Free tier is very limited
 )
+
+# YouTube Data API v3: 10,000 quota units/day free tier.
+# search.list = 100 units; videos.list = 1 unit per 50 IDs.
+# At ~101 units/keyword, daily cap is 99 keywords. Use the budget in config.py.
+YOUTUBE = RateLimiter(
+    service_name="youtube",
+    requests_per_minute=100,  # API hard limit is far higher; keep friendly
+    daily_limit=200,  # 99 keywords × 2 calls each = 198 requests
+)

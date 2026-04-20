@@ -289,43 +289,46 @@ def _calc_sourcing_score(cursor, category: str) -> float:
 
 
 def _calc_content_score(cursor, category: str) -> float:
-    """Score based on TikTok engagement potential (0-100)."""
-    keywords = get_active_keywords().get(category, [])
-    if not keywords:
-        return 50.0
-
-    placeholders = ",".join("?" * len(keywords))
+    """Score based on YouTube content volume for category keywords (0-100)."""
+    # Aggregate the most recent content_trends row per keyword in this category
     cursor.execute(
-        f"""SELECT AVG(view_count) as avg_views, AVG(ad_count) as avg_ads
-            FROM tiktok_trends
-            WHERE keyword IN ({placeholders})
-            AND date >= date('now', '-30 days')""",
-        keywords,
+        """SELECT AVG(ct.avg_views_per_video)  AS avg_views,
+                  AVG(ct.video_count_7d)        AS avg_velocity,
+                  COUNT(*)                      AS n
+           FROM keywords k
+           JOIN content_trends ct ON ct.keyword_id = k.id
+           WHERE k.category = ? AND k.is_active = 1
+             AND ct.collected_at >= datetime('now', '-30 days')""",
+        (category,),
     )
     row = cursor.fetchone()
 
-    if not row or not row["avg_views"]:
+    if not row or not row["n"]:
         defaults = {"beauty": 80, "jewelry": 60, "travel": 55}
         return defaults.get(category, 50)
 
-    # Logarithmic scale: 1K=20, 10K=40, 100K=60, 1M=80, 10M=100
     avg_views = row["avg_views"] or 0
+    velocity = row["avg_velocity"] or 0
+
+    # Volume component: log-scaled average views per video.
+    # 1K=20, 10K=40, 100K=60, 1M=80, 10M=100.
     if avg_views > 0:
         view_score = min(100, max(0, (math.log10(avg_views) - 3) * 20))
     else:
         view_score = 0
 
-    # Some ads = validated market, too many = saturated
-    ad_score = 50
-    if row["avg_ads"]:
-        if row["avg_ads"] < 10:
-            ad_score = 70
-        elif row["avg_ads"] < 50:
-            ad_score = 60
-        else:
-            ad_score = 30
+    # Velocity component: more videos published in last 7 days = hotter topic.
+    # 0=30, 3=60, 5+=90.
+    if velocity >= 5:
+        velocity_score = 90
+    elif velocity >= 3:
+        velocity_score = 60
+    elif velocity >= 1:
+        velocity_score = 45
+    else:
+        velocity_score = 30
 
-    return (view_score + ad_score) / 2
+    return (view_score + velocity_score) / 2
 
 
 def _calc_repeat_purchase_score(cursor, category: str) -> float:

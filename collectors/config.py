@@ -13,6 +13,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 ALIBABA_APP_KEY = os.getenv("ALIBABA_APP_KEY", "")
 ALIBABA_APP_SECRET = os.getenv("ALIBABA_APP_SECRET", "")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+YOUTUBE_DAILY_KEYWORD_BUDGET = int(os.getenv("YOUTUBE_DAILY_KEYWORD_BUDGET", "99"))
 
 DB_PATH = os.environ.get(
     "DB_PATH",
@@ -177,6 +179,7 @@ SCHEDULE = {
     "google_trends": {"hour": 6, "minute": 0},
     "keepa": {"hours": 6},
     "tiktok": {"hour": 8, "minute": 0},
+    "youtube": {"hour": 8, "minute": 0},
     "alibaba": {"day_of_week": "mon", "hour": 2},
     "daily_digest": {"hour": 9, "minute": 0},
     "weekly_analysis": {"day_of_week": "sun", "hour": 0},

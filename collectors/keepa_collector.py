@@ -20,118 +20,133 @@ def get_db():
 
 
 def collect_products():
-    """Collect price, rank, and stock data for tracked ASINs via Keepa."""
+    """Collect price, rank, and stock data for tracked ASINs via Keepa.
+
+    Returns (success: bool, items_written: int, error: str | None).
+    Never raises to the scheduler.
+    """
     if not KEEPA_API_KEY:
         logger.warning("KEEPA_API_KEY not set, skipping collection.")
-        return 0
+        return (True, 0, "KEEPA_API_KEY not set")
 
-    api = keepa.Keepa(KEEPA_API_KEY)
-    db = get_db()
-    cursor = db.cursor()
-    total_collected = 0
+    try:
+        tracked = get_tracked_asins()
+        if not tracked or all(not v for v in tracked.values()):
+            logger.warning(
+                "No ASINs configured in products table. "
+                "Run `python scripts/seed_watchlist.py` or add ASINs via the dashboard."
+            )
+            return (True, 0, None)
 
-    tracked = get_tracked_asins()
-    for category, asins in tracked.items():
-        if not asins:
-            logger.info(f"No ASINs configured for {category}, skipping.")
-            continue
+        api = keepa.Keepa(KEEPA_API_KEY)
+        db = get_db()
+        cursor = db.cursor()
+        total_collected = 0
 
-        logger.info(f"Collecting Keepa data for {len(asins)} ASINs in {category}")
+        for category, asins in tracked.items():
+            if not asins:
+                logger.info(f"No ASINs configured for {category}, skipping.")
+                continue
 
-        try:
-            KEEPA_API.wait_if_needed()
-            products = api.query(asins, domain="US", history=True)
-            KEEPA_API.record_request()
+            logger.info(f"Collecting Keepa data for {len(asins)} ASINs in {category}")
 
-            for product in products:
-                asin = product.get("asin", "")
-                title = product.get("title", "")
-                brand = product.get("brand", "")
-                image_url = ""
-                images = product.get("imagesCSV", "")
-                if images:
-                    image_url = f"https://images-na.ssl-images-amazon.com/images/I/{images.split(',')[0]}"
+            try:
+                KEEPA_API.wait_if_needed()
+                products = api.query(asins, domain="US", history=True)
+                KEEPA_API.record_request()
 
-                # Upsert product record
-                cursor.execute(
-                    """INSERT INTO products (asin, title, category, brand, image_url)
-                       VALUES (?, ?, ?, ?, ?)
-                       ON CONFLICT(asin) DO UPDATE SET
-                           title = excluded.title,
-                           brand = excluded.brand,
-                           image_url = excluded.image_url""",
-                    (asin, title, category, brand, image_url),
-                )
+                for product in products:
+                    asin = product.get("asin", "")
+                    title = product.get("title", "")
+                    brand = product.get("brand", "")
+                    image_url = ""
+                    images = product.get("imagesCSV", "")
+                    if images:
+                        image_url = f"https://images-na.ssl-images-amazon.com/images/I/{images.split(',')[0]}"
 
-                cursor.execute(
-                    "SELECT id FROM products WHERE asin = ?", (asin,)
-                )
-                product_id = cursor.fetchone()["id"]
+                    # Upsert product record
+                    cursor.execute(
+                        """INSERT INTO products (asin, title, category, brand, image_url)
+                           VALUES (?, ?, ?, ?, ?)
+                           ON CONFLICT(asin) DO UPDATE SET
+                               title = excluded.title,
+                               brand = excluded.brand,
+                               image_url = excluded.image_url""",
+                        (asin, title, category, brand, image_url),
+                    )
 
-                # Extract latest data points from Keepa history
-                current_price = _get_latest_keepa_value(product, "csv", index=0)  # Amazon price
-                buy_box_price = _get_latest_keepa_value(product, "csv", index=18)  # Buy box
-                sales_rank = _get_latest_keepa_value(product, "csv", index=3)  # Sales rank
-                offers_count = _get_latest_keepa_value(product, "csv", index=11)  # New offer count
+                    cursor.execute(
+                        "SELECT id FROM products WHERE asin = ?", (asin,)
+                    )
+                    product_id = cursor.fetchone()["id"]
 
-                rating = product.get("csv", [[]])[16]  # Rating history
-                rating_val = rating[-1] / 10.0 if rating and len(rating) > 0 and rating[-1] else None
+                    # Extract latest data points from Keepa history
+                    current_price = _get_latest_keepa_value(product, "csv", index=0)  # Amazon price
+                    buy_box_price = _get_latest_keepa_value(product, "csv", index=18)  # Buy box
+                    sales_rank = _get_latest_keepa_value(product, "csv", index=3)  # Sales rank
+                    offers_count = _get_latest_keepa_value(product, "csv", index=11)  # New offer count
 
-                review_count = product.get("csv", [[]])[17]  # Review count history
-                review_val = review_count[-1] if review_count and len(review_count) > 0 else None
+                    rating = product.get("csv", [[]])[16]  # Rating history
+                    rating_val = rating[-1] / 10.0 if rating and len(rating) > 0 and rating[-1] else None
 
-                # Determine stock status
-                stock_status = "in_stock"
-                if current_price is None or current_price < 0:
-                    stock_status = "out_of_stock"
-                elif offers_count is not None and offers_count <= 2:
-                    stock_status = "low_stock"
+                    review_count = product.get("csv", [[]])[17]  # Review count history
+                    review_val = review_count[-1] if review_count and len(review_count) > 0 else None
 
-                # Convert Keepa price (cents) to dollars
-                if current_price and current_price > 0:
-                    current_price = current_price / 100.0
-                else:
-                    current_price = None
+                    # Determine stock status
+                    stock_status = "in_stock"
+                    if current_price is None or current_price < 0:
+                        stock_status = "out_of_stock"
+                    elif offers_count is not None and offers_count <= 2:
+                        stock_status = "low_stock"
 
-                if buy_box_price and buy_box_price > 0:
-                    buy_box_price = buy_box_price / 100.0
-                else:
-                    buy_box_price = None
+                    # Convert Keepa price (cents) to dollars
+                    if current_price and current_price > 0:
+                        current_price = current_price / 100.0
+                    else:
+                        current_price = None
 
-                cursor.execute(
-                    """INSERT INTO product_history
-                       (product_id, date, price, sales_rank, rating, review_count,
-                        offers_count, buy_box_price, stock_status, collected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        product_id,
-                        datetime.utcnow().isoformat(),
-                        current_price,
-                        sales_rank,
-                        rating_val,
-                        review_val,
-                        offers_count,
-                        buy_box_price,
-                        stock_status,
-                        datetime.utcnow().isoformat(),
-                    ),
-                )
-                total_collected += 1
-                logger.info(f"Collected data for {asin}: ${current_price}, rank={sales_rank}")
+                    if buy_box_price and buy_box_price > 0:
+                        buy_box_price = buy_box_price / 100.0
+                    else:
+                        buy_box_price = None
 
-            db.commit()
+                    cursor.execute(
+                        """INSERT INTO product_history
+                           (product_id, date, price, sales_rank, rating, review_count,
+                            offers_count, buy_box_price, stock_status, collected_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            product_id,
+                            datetime.utcnow().isoformat(),
+                            current_price,
+                            sales_rank,
+                            rating_val,
+                            review_val,
+                            offers_count,
+                            buy_box_price,
+                            stock_status,
+                            datetime.utcnow().isoformat(),
+                        ),
+                    )
+                    total_collected += 1  # per spec: count product_history rows
+                    logger.info(f"Collected data for {asin}: ${current_price}, rank={sales_rank}")
 
-        except RateLimitExceeded as e:
-            logger.warning(f"Stopping Keepa collection: {e}")
-            db.close()
-            return total_collected
-        except Exception as e:
-            logger.error(f"Error collecting Keepa data for {category}: {e}")
-            db.rollback()
+                db.commit()
 
-    db.close()
-    logger.info(f"Keepa collection complete. {total_collected} products updated.")
-    return total_collected
+            except RateLimitExceeded as e:
+                logger.warning(f"Stopping Keepa collection: {e}")
+                db.close()
+                return (True, total_collected, str(e))
+            except Exception as e:
+                logger.error(f"Error collecting Keepa data for {category}: {e}")
+                db.rollback()
+
+        db.close()
+        logger.info(f"Keepa collection complete. {total_collected} products updated.")
+        return (True, total_collected, None)
+    except Exception as e:
+        logger.error(f"Keepa top-level error: {e}", exc_info=True)
+        return (False, 0, str(e))
 
 
 def discover_new_products(category: str, search_term: str, max_results: int = 20):

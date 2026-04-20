@@ -13,8 +13,32 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
+
+def load_env_or_die(env_path):
+    """Load .env and abort loudly if it's missing.
+
+    Previously this was silent; a missing .env disabled conditional collectors
+    (like Keepa) at scheduler startup with no error visible in the logs.
+    """
+    if not os.path.exists(env_path):
+        print(
+            f"ERROR: .env file not found at {env_path}. "
+            "Scheduler cannot start without it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    load_dotenv(env_path)
+
+
 # Load .env from parent directory (for VPS deployment)
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+_ENV_PATH = os.path.join(os.path.dirname(__file__), "..", ".env")
+if __name__ == "__main__" or os.environ.get("NICHESCOPE_REQUIRE_ENV") == "1":
+    load_env_or_die(_ENV_PATH)
+else:
+    # During tests, importing scheduler should NOT terminate the interpreter.
+    # Callers must invoke load_env_or_die explicitly.
+    if os.path.exists(_ENV_PATH):
+        load_dotenv(_ENV_PATH)
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -25,6 +49,7 @@ from config import DB_PATH, SCHEDULE, get_active_keywords
 from google_trends import collect_trends
 from keepa_collector import collect_products, detect_anomalies
 from tiktok_trends import collect_tiktok_trends
+from youtube_trends import collect_youtube_trends
 from alibaba_collector import collect_alibaba_suppliers
 from similarweb import collect_competitor_traffic
 from analyzer import run_analysis, detect_breakouts
@@ -67,46 +92,83 @@ def get_health_db():
     return conn
 
 
-def record_collector_health(collector_name, success=True, error=None):
-    """Update the collector_health table after a job runs."""
+def run_collector_job(name: str, fn):
+    """Invoke a collector function, normalize its return, and record real health.
+
+    Accepts collectors that return either:
+      - (success: bool, items_written: int, error: str | None)
+      - int (legacy — treated as success with that row count)
+      - None (legacy — treated as success with 0 row count)
+
+    Never raises. Returns the normalized tuple.
+    """
+    try:
+        result = fn()
+    except Exception as e:
+        logger.error(f"[{name}] collector raised: {e}", exc_info=True)
+        _write_health(name, success=False, items=0, error=str(e)[:500])
+        return (False, 0, str(e))
+
+    if isinstance(result, tuple) and len(result) == 3:
+        success, items, error = result
+    elif isinstance(result, int):
+        success, items, error = True, result, None
+    elif result is None:
+        success, items, error = True, 0, None
+    else:
+        logger.warning(f"[{name}] returned unexpected type {type(result).__name__}; treating as success")
+        success, items, error = True, 0, None
+
+    _write_health(name, success=success, items=items, error=error)
+    return (success, items, error)
+
+
+def _write_health(name: str, success: bool, items: int, error):
+    """Low-level health writer with row-count + status."""
     try:
         db = get_health_db()
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
+        status = "success" if success else "failed"
         if success:
-            db.execute("""
-                INSERT INTO collector_health
-                    (collector_name, last_run, last_success, consecutive_failures,
-                     total_runs, total_successes, updated_at)
-                VALUES (?, ?, ?, 0, 1, 1, ?)
-                ON CONFLICT(collector_name) DO UPDATE SET
-                    last_run = ?,
-                    last_success = ?,
-                    last_error = NULL,
-                    consecutive_failures = 0,
-                    total_runs = total_runs + 1,
-                    total_successes = total_successes + 1,
-                    updated_at = ?
-            """, (collector_name, now, now, now, now, now, now))
+            db.execute(
+                """INSERT INTO collector_health
+                       (collector_name, last_run, last_success, last_error,
+                        consecutive_failures, total_runs, total_successes,
+                        items_collected, last_status, updated_at)
+                   VALUES (?, ?, ?, NULL, 0, 1, 1, ?, ?, ?)
+                   ON CONFLICT(collector_name) DO UPDATE SET
+                       last_run = excluded.last_run,
+                       last_success = excluded.last_success,
+                       last_error = NULL,
+                       consecutive_failures = 0,
+                       total_runs = total_runs + 1,
+                       total_successes = total_successes + 1,
+                       items_collected = excluded.items_collected,
+                       last_status = excluded.last_status,
+                       updated_at = excluded.updated_at""",
+                (name, now, now, items, status, now),
+            )
         else:
-            error_msg = str(error)[:500] if error else "Unknown error"
-            db.execute("""
-                INSERT INTO collector_health
-                    (collector_name, last_run, last_error, consecutive_failures,
-                     total_runs, total_successes, updated_at)
-                VALUES (?, ?, ?, 1, 1, 0, ?)
-                ON CONFLICT(collector_name) DO UPDATE SET
-                    last_run = ?,
-                    last_error = ?,
-                    consecutive_failures = consecutive_failures + 1,
-                    total_runs = total_runs + 1,
-                    updated_at = ?
-            """, (collector_name, now, error_msg, now, now, error_msg, now))
-
+            err = (error or "Unknown")[:500]
+            db.execute(
+                """INSERT INTO collector_health
+                       (collector_name, last_run, last_error, consecutive_failures,
+                        total_runs, total_successes, items_collected, last_status, updated_at)
+                   VALUES (?, ?, ?, 1, 1, 0, ?, ?, ?)
+                   ON CONFLICT(collector_name) DO UPDATE SET
+                       last_run = excluded.last_run,
+                       last_error = excluded.last_error,
+                       consecutive_failures = consecutive_failures + 1,
+                       total_runs = total_runs + 1,
+                       items_collected = excluded.items_collected,
+                       last_status = excluded.last_status,
+                       updated_at = excluded.updated_at""",
+                (name, now, err, items, status, now),
+            )
         db.commit()
         db.close()
     except Exception as e:
-        logger.error(f"Failed to record health for {collector_name}: {e}")
+        logger.error(f"[{name}] failed to record health: {e}")
 
 
 def check_and_alert_failures(collector_name):
@@ -141,16 +203,11 @@ def check_and_alert_failures(collector_name):
 # ============================================================
 
 def job_listener(event):
-    """Log job execution results and track health."""
+    """Escalate repeated consecutive failures to Telegram."""
     job_id = event.job_id
-
     if event.exception:
-        logger.error(f"Job '{job_id}' failed: {event.exception}")
-        record_collector_health(job_id, success=False, error=str(event.exception))
+        logger.error(f"Job '{job_id}' raised past run_collector_job — unexpected")
         check_and_alert_failures(job_id)
-    else:
-        logger.info(f"Job '{job_id}' completed successfully")
-        record_collector_health(job_id, success=True)
 
 
 # ============================================================
@@ -159,81 +216,77 @@ def job_listener(event):
 
 def job_google_trends():
     logger.info("=== Google Trends collection started ===")
-    try:
-        count = collect_trends()
-        logger.info(f"Google Trends: {count} data points collected")
+    success, count, err = run_collector_job("google_trends", collect_trends)
+    if success:
         run_post_collection()
-    except Exception as e:
-        logger.error(f"Google Trends job failed: {e}", exc_info=True)
-        raise
+    return (success, count, err)
 
 
 def job_keepa():
     logger.info("=== Keepa collection started ===")
-    try:
-        count = collect_products()
-        logger.info(f"Keepa: {count} products updated")
-        anomalies = detect_anomalies()
-        for anomaly in anomalies:
-            send_price_alert(anomaly)
+    if not os.getenv("KEEPA_API_KEY"):
+        logger.warning("KEEPA_API_KEY not set; skipping this run.")
+        return (True, 0, "KEEPA_API_KEY not set")
+    success, count, err = run_collector_job("keepa", collect_products)
+    if success and count > 0:
+        try:
+            anomalies = detect_anomalies()
+            for anomaly in anomalies:
+                send_price_alert(anomaly)
+        except Exception as e:
+            logger.error(f"Post-Keepa analysis failed: {e}")
         run_post_collection()
-    except Exception as e:
-        logger.error(f"Keepa job failed: {e}", exc_info=True)
-        raise
+    return (success, count, err)
 
 
 def job_tiktok():
-    logger.info("=== TikTok trends collection started ===")
-    try:
-        count = collect_tiktok_trends()
-        logger.info(f"TikTok: {count} keywords processed")
+    logger.info("=== TikTok collection skipped (deprecated, see YouTube collector) ===")
+    return (True, 0, "deprecated")
+
+
+def job_youtube():
+    logger.info("=== YouTube collection started ===")
+    if not os.getenv("YOUTUBE_API_KEY"):
+        logger.warning("YOUTUBE_API_KEY not set; skipping this run.")
+        return (True, 0, "YOUTUBE_API_KEY not set")
+    success, count, err = run_collector_job("youtube", collect_youtube_trends)
+    if success and count > 0:
         run_post_collection()
-    except Exception as e:
-        logger.error(f"TikTok job failed: {e}", exc_info=True)
-        raise
+    return (success, count, err)
 
 
 def job_alibaba():
     logger.info("=== Alibaba supplier scan started ===")
-    try:
-        count = collect_alibaba_suppliers()
-        logger.info(f"Alibaba: {count} new suppliers discovered")
-    except Exception as e:
-        logger.error(f"Alibaba job failed: {e}", exc_info=True)
-        raise
+    return run_collector_job("alibaba", collect_alibaba_suppliers)
 
 
 def job_competitor_traffic():
     logger.info("=== Competitor traffic collection started ===")
-    try:
-        count = collect_competitor_traffic()
-        logger.info(f"SimilarWeb: {count} domains updated")
-    except Exception as e:
-        logger.error(f"Competitor traffic job failed: {e}", exc_info=True)
-        raise
+    return run_collector_job("competitor_traffic", collect_competitor_traffic)
 
 
 def job_daily_digest():
     logger.info("=== Daily digest job started ===")
+    if not os.getenv("TELEGRAM_BOT_TOKEN"):
+        logger.info("TELEGRAM_BOT_TOKEN not set; skipping digest.")
+        return (True, 0, None)
     try:
         send_daily_digest()
-        logger.info("Daily digest sent")
+        return (True, 1, None)
     except Exception as e:
-        logger.error(f"Daily digest job failed: {e}", exc_info=True)
-        raise
+        logger.error(f"Daily digest failed: {e}", exc_info=True)
+        return (False, 0, str(e))
 
 
 def job_weekly_analysis():
     logger.info("=== Weekly deep analysis started ===")
-    try:
+    def _wrapped():
         results = run_analysis()
         for b in results.get("breakouts", []):
             if b["severity"] == "critical":
                 send_breakout_alert(b)
-        logger.info("Weekly analysis complete")
-    except Exception as e:
-        logger.error(f"Weekly analysis failed: {e}", exc_info=True)
-        raise
+        return (True, len(results.get("breakouts", [])), None)
+    return run_collector_job("weekly_analysis", _wrapped)
 
 
 def job_telegram_poll():
@@ -246,58 +299,60 @@ def job_telegram_poll():
 
 def job_discovery_categories():
     logger.info("=== Discovery: category scan started ===")
-    try:
-        count = run_discovery()
-        logger.info(f"Discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Discovery category scan failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("discovery_categories", run_discovery)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_discovery_related():
     logger.info("=== Discovery: related queries scan started ===")
-    try:
+    def _wrapped():
         from discovery import discover_from_related_queries
-        count = discover_from_related_queries()
-        logger.info(f"Related queries discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Related queries discovery failed: {e}", exc_info=True)
-        raise
+        return discover_from_related_queries()
+    success, count, err = run_collector_job("discovery_related", _wrapped)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_reddit_discovery():
     logger.info("=== Reddit discovery started ===")
-    try:
-        count = discover_from_reddit()
-        logger.info(f"Reddit discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Reddit discovery failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("reddit_discovery", discover_from_reddit)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_etsy_discovery():
     logger.info("=== Etsy discovery started ===")
-    try:
-        count = discover_from_etsy()
-        logger.info(f"Etsy discovery: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Etsy discovery failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("etsy_discovery", discover_from_etsy)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def job_amazon_bestsellers():
     logger.info("=== Amazon Best Sellers discovery started ===")
-    try:
-        count = collect_amazon_bestsellers()
-        logger.info(f"Amazon Best Sellers: {count} new pending keywords")
-        send_discovery_digest()
-    except Exception as e:
-        logger.error(f"Amazon Best Sellers discovery failed: {e}", exc_info=True)
-        raise
+    success, count, err = run_collector_job("amazon_bestsellers", collect_amazon_bestsellers)
+    if success:
+        try:
+            send_discovery_digest()
+        except Exception as e:
+            logger.error(f"Discovery digest failed: {e}")
+    return (success, count, err)
 
 
 def run_post_collection():
@@ -336,7 +391,7 @@ def run_initial_collection_if_needed():
 # Main Scheduler
 # ============================================================
 
-def main():
+def build_scheduler() -> BlockingScheduler:
     scheduler = BlockingScheduler(timezone="Asia/Hong_Kong")
 
     # Register the job listener for health tracking
@@ -356,18 +411,15 @@ def main():
         coalesce=True,
     )
 
-    # Keepa: every 6 hours (only if API key is configured)
-    if os.getenv("KEEPA_API_KEY"):
-        scheduler.add_job(
-            job_keepa,
-            IntervalTrigger(hours=SCHEDULE["keepa"]["hours"]),
-            id="keepa",
-            name="Keepa Product Collector",
-            misfire_grace_time=1800,
-            coalesce=True,
-        )
-    else:
-        logger.info("KEEPA_API_KEY not set. Keepa collector disabled.")
+    # Keepa: every 6 hours (registered unconditionally; env checked at runtime)
+    scheduler.add_job(
+        job_keepa,
+        IntervalTrigger(hours=SCHEDULE["keepa"]["hours"]),
+        id="keepa",
+        name="Keepa Product Collector",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
 
     # TikTok: daily at 8am HKT
     scheduler.add_job(
@@ -379,6 +431,19 @@ def main():
         ),
         id="tiktok",
         name="TikTok Trends Collector",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+    scheduler.add_job(
+        job_youtube,
+        CronTrigger(
+            hour=SCHEDULE["youtube"]["hour"],
+            minute=SCHEDULE["youtube"]["minute"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="youtube",
+        name="YouTube Trends Collector",
         misfire_grace_time=3600,
         coalesce=True,
     )
@@ -457,22 +522,23 @@ def main():
         coalesce=True,
     )
 
-    # Daily Telegram digest: 9am HKT
-    if os.getenv("TELEGRAM_BOT_TOKEN"):
-        scheduler.add_job(
-            job_daily_digest,
-            CronTrigger(
-                hour=SCHEDULE["daily_digest"]["hour"],
-                minute=SCHEDULE["daily_digest"]["minute"],
-                timezone="Asia/Hong_Kong",
-            ),
-            id="daily_digest",
-            name="Daily Telegram Digest",
-            misfire_grace_time=600,
-            coalesce=True,
-        )
+    # Daily Telegram digest: 9am HKT (registered unconditionally; env checked at runtime)
+    scheduler.add_job(
+        job_daily_digest,
+        CronTrigger(
+            hour=SCHEDULE["daily_digest"]["hour"],
+            minute=SCHEDULE["daily_digest"]["minute"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="daily_digest",
+        name="Daily Telegram Digest",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
 
-        # Telegram command polling: every 30 seconds
+    # Telegram command polling: every 30 seconds (still startup-gated since it
+    # is not a collector job and only makes sense when a token is configured)
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
         scheduler.add_job(
             job_telegram_poll,
             IntervalTrigger(seconds=30),
@@ -480,7 +546,7 @@ def main():
             name="Telegram Command Poller",
         )
     else:
-        logger.info("TELEGRAM_BOT_TOKEN not set. Telegram features disabled.")
+        logger.info("TELEGRAM_BOT_TOKEN not set. Telegram command polling disabled.")
 
     # Weekly deep analysis: Sunday midnight HKT
     scheduler.add_job(
@@ -504,14 +570,15 @@ def main():
         name="Initial Collection Check",
     )
 
-    # Graceful shutdown
-    def shutdown(signum, frame):
-        logger.info("Shutting down scheduler...")
-        scheduler.shutdown(wait=False)
-        sys.exit(0)
+    return scheduler
 
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
+
+def main():
+    load_env_or_die(_ENV_PATH)
+    scheduler = build_scheduler()
+    run_initial_collection_if_needed()
+    signal.signal(signal.SIGINT, lambda *_: scheduler.shutdown())
+    signal.signal(signal.SIGTERM, lambda *_: scheduler.shutdown())
 
     # Startup info
     keywords = get_active_keywords()
@@ -533,6 +600,7 @@ def main():
     except Exception as e:
         logger.warning(f"Initial analysis skipped (may be empty DB): {e}")
 
+    logger.info("Scheduler starting...")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
