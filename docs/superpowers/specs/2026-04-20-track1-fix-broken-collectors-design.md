@@ -162,8 +162,8 @@ If any collector still writes zero rows after step 4, that collector is removed 
 - **Similarweb public endpoint is undocumented** and can disappear without warning. Mitigation: treat `visits_estimate=0` as valid data rather than skipping, so historical trend continuity is preserved even during outages.
 - **Alibaba bot-detection.** Branch resolution is in the implementation plan. If both branches fail (block is permanent + no bug), we accept that supplier counts stay capped and document it as a known limitation rather than extending this spec.
 
-## Open questions for user review
+## Resolved decisions (2026-04-20 review)
 
-1. YouTube quota budget of 100 keywords/day — acceptable, or would you rather cover fewer (top 50) with more signals per keyword?
-2. Acceptable to fail-loud (scheduler exits) if `.env` is missing? Currently silent — a change in operator behavior.
-3. Any preference on whether `alibaba_collector.py` gets scope in this track or gets deferred to a follow-up if the log dive shows the issue is bot-blocking rather than a code bug?
+1. **YouTube quota budget:** 99 keywords/day default accepted.
+2. **`.env` fail-loud:** Accepted — scheduler will log ERROR and `sys.exit(1)` if `.env` is missing. Operator must ensure `.env` is present when PM2 starts the process.
+3. **Alibaba scope:** Conditional — if the log dive reveals a fixable code bug (missing upsert, wrong conflict target, etc.), fix it inside this track. If the root cause is bot-blocking / HTML-response-instead-of-JSON, **defer** the bot-mitigation work to a follow-up track. This keeps Track 1 predictable in size.
