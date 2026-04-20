@@ -90,46 +90,83 @@ def get_health_db():
     return conn
 
 
-def record_collector_health(collector_name, success=True, error=None):
-    """Update the collector_health table after a job runs."""
+def run_collector_job(name: str, fn):
+    """Invoke a collector function, normalize its return, and record real health.
+
+    Accepts collectors that return either:
+      - (success: bool, items_written: int, error: str | None)
+      - int (legacy — treated as success with that row count)
+      - None (legacy — treated as success with 0 row count)
+
+    Never raises. Returns the normalized tuple.
+    """
+    try:
+        result = fn()
+    except Exception as e:
+        logger.error(f"[{name}] collector raised: {e}", exc_info=True)
+        _write_health(name, success=False, items=0, error=str(e)[:500])
+        return (False, 0, str(e))
+
+    if isinstance(result, tuple) and len(result) == 3:
+        success, items, error = result
+    elif isinstance(result, int):
+        success, items, error = True, result, None
+    elif result is None:
+        success, items, error = True, 0, None
+    else:
+        logger.warning(f"[{name}] returned unexpected type {type(result).__name__}; treating as success")
+        success, items, error = True, 0, None
+
+    _write_health(name, success=success, items=items, error=error)
+    return (success, items, error)
+
+
+def _write_health(name: str, success: bool, items: int, error):
+    """Low-level health writer with row-count + status."""
     try:
         db = get_health_db()
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
+        status = "success" if success else "failed"
         if success:
-            db.execute("""
-                INSERT INTO collector_health
-                    (collector_name, last_run, last_success, consecutive_failures,
-                     total_runs, total_successes, updated_at)
-                VALUES (?, ?, ?, 0, 1, 1, ?)
-                ON CONFLICT(collector_name) DO UPDATE SET
-                    last_run = ?,
-                    last_success = ?,
-                    last_error = NULL,
-                    consecutive_failures = 0,
-                    total_runs = total_runs + 1,
-                    total_successes = total_successes + 1,
-                    updated_at = ?
-            """, (collector_name, now, now, now, now, now, now))
+            db.execute(
+                """INSERT INTO collector_health
+                       (collector_name, last_run, last_success, last_error,
+                        consecutive_failures, total_runs, total_successes,
+                        items_collected, last_status, updated_at)
+                   VALUES (?, ?, ?, NULL, 0, 1, 1, ?, ?, ?)
+                   ON CONFLICT(collector_name) DO UPDATE SET
+                       last_run = excluded.last_run,
+                       last_success = excluded.last_success,
+                       last_error = NULL,
+                       consecutive_failures = 0,
+                       total_runs = total_runs + 1,
+                       total_successes = total_successes + 1,
+                       items_collected = excluded.items_collected,
+                       last_status = excluded.last_status,
+                       updated_at = excluded.updated_at""",
+                (name, now, now, items, status, now),
+            )
         else:
-            error_msg = str(error)[:500] if error else "Unknown error"
-            db.execute("""
-                INSERT INTO collector_health
-                    (collector_name, last_run, last_error, consecutive_failures,
-                     total_runs, total_successes, updated_at)
-                VALUES (?, ?, ?, 1, 1, 0, ?)
-                ON CONFLICT(collector_name) DO UPDATE SET
-                    last_run = ?,
-                    last_error = ?,
-                    consecutive_failures = consecutive_failures + 1,
-                    total_runs = total_runs + 1,
-                    updated_at = ?
-            """, (collector_name, now, error_msg, now, now, error_msg, now))
-
+            err = (error or "Unknown")[:500]
+            db.execute(
+                """INSERT INTO collector_health
+                       (collector_name, last_run, last_error, consecutive_failures,
+                        total_runs, total_successes, items_collected, last_status, updated_at)
+                   VALUES (?, ?, ?, 1, 1, 0, ?, ?, ?)
+                   ON CONFLICT(collector_name) DO UPDATE SET
+                       last_run = excluded.last_run,
+                       last_error = excluded.last_error,
+                       consecutive_failures = consecutive_failures + 1,
+                       total_runs = total_runs + 1,
+                       items_collected = excluded.items_collected,
+                       last_status = excluded.last_status,
+                       updated_at = excluded.updated_at""",
+                (name, now, err, items, status, now),
+            )
         db.commit()
         db.close()
     except Exception as e:
-        logger.error(f"Failed to record health for {collector_name}: {e}")
+        logger.error(f"[{name}] failed to record health: {e}")
 
 
 def check_and_alert_failures(collector_name):
@@ -164,16 +201,11 @@ def check_and_alert_failures(collector_name):
 # ============================================================
 
 def job_listener(event):
-    """Log job execution results and track health."""
+    """Escalate repeated consecutive failures to Telegram."""
     job_id = event.job_id
-
     if event.exception:
-        logger.error(f"Job '{job_id}' failed: {event.exception}")
-        record_collector_health(job_id, success=False, error=str(event.exception))
+        logger.error(f"Job '{job_id}' raised past run_collector_job — unexpected")
         check_and_alert_failures(job_id)
-    else:
-        logger.info(f"Job '{job_id}' completed successfully")
-        record_collector_health(job_id, success=True)
 
 
 # ============================================================
