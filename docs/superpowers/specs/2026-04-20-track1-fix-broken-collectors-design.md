@@ -24,7 +24,7 @@ Additionally:
 
 ## Goals
 
-1. Each of `products`, `product_history`, `competitor_traffic`, and (the renamed) `content_trends` table receives new rows within one scheduler cycle after deploy.
+1. Each of `products`, `product_history`, `competitor_traffic`, and (the renamed) `content_trends` table receives new rows within 24 hours of deploy (the longest collector cycle in scope is daily — YouTube at 8am HKT).
 2. Replacement for TikTok uses a signal that is actually available: YouTube Data API v3.
 3. Env-loading failures surface loudly instead of silently disabling collectors.
 4. Each fixed collector reports real success/failure to `collector_health`, including row-count delta per run.
@@ -54,7 +54,7 @@ Per-keyword signals stored:
 - `top_video_views` — max `viewCount`
 - `avg_views_per_video` — mean `viewCount`
 
-**Quota budget.** YouTube Data API v3 gives 10,000 quota units/day on the free tier. `search.list` = 100 units, `videos.list` = 1 unit per 50 IDs. Per keyword ≈ 101 units. Default daily budget: **top 80 keywords by most-recent niche score + 20 newest-approved keywords = 100 keywords/day ≈ 10,100 units.** Configurable via `YOUTUBE_DAILY_KEYWORD_BUDGET` in config.
+**Quota budget.** YouTube Data API v3 gives 10,000 quota units/day on the free tier. `search.list` = 100 units, `videos.list` = 1 unit per 50 IDs. Per keyword ≈ 101 units. Default daily budget: **top 79 keywords by most-recent niche score + 20 newest-approved keywords = 99 keywords/day ≈ 9,999 units**, leaving ~1 unit of headroom. Configurable via `YOUTUBE_DAILY_KEYWORD_BUDGET` in config; raising it past 99 requires a quota increase from Google.
 
 Rotation is determined inside the collector so that over a week we cover the full active keyword list by score rank (tiered: top 80 every day, next 560 rotated across 7 days).
 
@@ -85,7 +85,9 @@ CREATE VIEW IF NOT EXISTS tiktok_trends AS
     FROM content_trends WHERE source = 'youtube';
 ```
 
-`analyzer.py::_calc_content_score` is updated to read from `content_trends` directly and interpret YouTube's signal (total views and 7-day publish velocity), not hashtag counts.
+`analyzer.py::_calc_content_score` is updated in the same release to read from `content_trends` directly and interpret YouTube's signal (total views and 7-day publish velocity), not hashtag counts.
+
+**View lifecycle:** the `tiktok_trends` back-compat view exists only to survive the transition if something outside `analyzer.py` still reads the old name. Drop it in the next release after verifying no callers remain — tracked as a follow-up cleanup, not a phase-2 of this track.
 
 ### Scheduler: env-loading correctness
 
@@ -129,7 +131,7 @@ In `collectors/config.py`:
 - `YOUTUBE_DAILY_KEYWORD_BUDGET = int(os.getenv("YOUTUBE_DAILY_KEYWORD_BUDGET", "100"))`
 - `SCHEDULE["youtube"] = {"hour": 8, "minute": 0}` (HKT, replacing the `tiktok` slot)
 
-New file: `.env.example` listing every key the project reads, with brief comments. This is the first time the project has documented its required env vars.
+New file: `.env.example` listing every key the project reads, with brief comments. Required keys to enumerate at minimum: `DB_PATH`, `KEEPA_API_KEY`, `AMAZON_ACCESS_KEY`, `AMAZON_SECRET_KEY`, `AMAZON_PARTNER_TAG`, `YOUTUBE_API_KEY`, `YOUTUBE_DAILY_KEYWORD_BUDGET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. This is the first time the project has documented its required env vars.
 
 ## Testing
 
