@@ -13,8 +13,32 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
+
+def load_env_or_die(env_path):
+    """Load .env and abort loudly if it's missing.
+
+    Previously this was silent; a missing .env disabled conditional collectors
+    (like Keepa) at scheduler startup with no error visible in the logs.
+    """
+    if not os.path.exists(env_path):
+        print(
+            f"ERROR: .env file not found at {env_path}. "
+            "Scheduler cannot start without it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    load_dotenv(env_path)
+
+
 # Load .env from parent directory (for VPS deployment)
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+_ENV_PATH = os.path.join(os.path.dirname(__file__), "..", ".env")
+if __name__ == "__main__" or os.environ.get("NICHESCOPE_REQUIRE_ENV") == "1":
+    load_env_or_die(_ENV_PATH)
+else:
+    # During tests, importing scheduler should NOT terminate the interpreter.
+    # Callers must invoke load_env_or_die explicitly.
+    if os.path.exists(_ENV_PATH):
+        load_dotenv(_ENV_PATH)
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
