@@ -29,3 +29,10 @@ Thumbs.db
 # Logs
 *.log
 pm2-*.json
+
+# Claude Code worktree / plugin state
+.claude/
+
+# SQLite WAL / SHM files
+data/*.db-wal
+data/*.db-shm
