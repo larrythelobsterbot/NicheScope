@@ -39,9 +39,12 @@ DISCOVERY_SUBREDDITS = [
     "juststart",
     "SideProject",
     "passive_income",
+    "AsianBeauty",
+    "AusSkincare",
+    "SkincareAddictionUK",
 ]
 
-# Keywords that signal a product mention in a post
+# Patterns for dropshipping/FBA community posts
 SIGNAL_PHRASES = [
     r"selling\s+(\w[\w\s]{2,30})\s+(?:like crazy|well|fast|great)",
     r"found\s+(?:a\s+)?(?:great|good|amazing)\s+(?:niche|product)[\s:]+(\w[\w\s]{2,30})",
@@ -51,6 +54,30 @@ SIGNAL_PHRASES = [
     r"(?:recommend|suggest)\w*\s+(?:selling|trying)\s+(\w[\w\s]{2,30})",
     r"best\s+(?:selling|performing)\s+(\w[\w\s]{2,30})",
 ]
+
+# Beauty/skincare product type keywords
+BEAUTY_PRODUCT_TYPES = [
+    "serum", "ampoule", "essence", "toner", "cream", "lotion", "oil",
+    "sunscreen", "spf", "cleanser", "foam", "balm", "mask", "peel",
+    "patch", "exfoliant", "moisturizer", "moisturiser", "primer",
+    "concealer", "foundation", "tint", "gel", "milk", "scrub",
+]
+BEAUTY_BRANDS_KNOWN = [
+    "numbuzin", "medicube", "beauty of joseon", "skin1004", "cosrx",
+    "anua", "haruharu", "isntree", "purito", "round lab", "etude",
+    "innisfree", "laneige", "missha", "klairs", "torriden", "abib",
+    "dr ceuracle", "by wishtrend", "axis-y", "mary & may", "i'm from",
+    "ohlolly", "tirtir", "rom&nd", "peripera", "clio", "hera", "sulwhasoo",
+]
+
+BEAUTY_PRODUCT_PATTERN = re.compile(
+    r"\b([a-z][a-z0-9\s&'\-]{2,28}\s+(?:" + "|".join(BEAUTY_PRODUCT_TYPES) + r"))\b",
+    re.IGNORECASE,
+)
+BEAUTY_BRAND_PATTERN = re.compile(
+    r"\b((?:" + "|".join(re.escape(b) for b in BEAUTY_BRANDS_KNOWN) + r")\s+[a-z0-9][a-z0-9\s'\-\.]{1,30})\b",
+    re.IGNORECASE,
+)
 
 # Words to filter out (too generic)
 STOP_WORDS = {
@@ -99,20 +126,48 @@ def fetch_subreddit_posts(subreddit: str, sort: str = "hot", limit: int = 25) ->
         return []
 
 
-def extract_product_keywords(text: str) -> list:
-    """Extract potential product keywords from post text using signal phrases."""
+BEAUTY_SUBREDDITS = {"asianbeauty", "ausskincare", "skincareaddictionuk",
+                     "skincareaddiction", "30plusskincare"}
+
+
+def extract_product_keywords(text: str, subreddit: str = "") -> list:
+    """Extract potential product keywords from post text.
+
+    Uses beauty-specific patterns for beauty subreddits, dropshipping signal
+    phrases for everything else.
+    """
     keywords = []
     text_lower = text.lower()
 
-    for pattern in SIGNAL_PHRASES:
-        matches = re.findall(pattern, text_lower)
-        for match in matches:
-            cleaned = match.strip().rstrip(".,!?;:")
-            # Filter: must be 3+ chars, not all stop words
-            words = cleaned.split()
-            non_stop = [w for w in words if w.lower() not in STOP_WORDS]
-            if len(cleaned) >= 3 and len(non_stop) > 0 and len(words) <= 5:
+    is_beauty = subreddit.lower() in BEAUTY_SUBREDDITS
+
+    if is_beauty:
+        # 1. Brand-name based: "numbuzin no 9 toner" → captured
+        for match in BEAUTY_BRAND_PATTERN.finditer(text_lower):
+            cleaned = match.group(1).strip().rstrip(".,!?;:()[]")
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            if 4 <= len(cleaned) <= 60 and len(cleaned.split()) <= 6:
                 keywords.append(cleaned)
+
+        # 2. Generic "X serum/toner/cream/etc" — captures category-level mentions
+        for match in BEAUTY_PRODUCT_PATTERN.finditer(text_lower):
+            cleaned = match.group(1).strip().rstrip(".,!?;:()[]")
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            words = cleaned.split()
+            # Skip if all leading words are stopwords/junk
+            non_stop = [w for w in words if w not in STOP_WORDS]
+            if 4 <= len(cleaned) <= 50 and len(words) <= 5 and len(non_stop) >= 2:
+                keywords.append(cleaned)
+    else:
+        # Dropshipping/FBA signal phrases for non-beauty subs
+        for pattern in SIGNAL_PHRASES:
+            matches = re.findall(pattern, text_lower)
+            for match in matches:
+                cleaned = match.strip().rstrip(".,!?;:")
+                words = cleaned.split()
+                non_stop = [w for w in words if w.lower() not in STOP_WORDS]
+                if len(cleaned) >= 3 and len(non_stop) > 0 and len(words) <= 5:
+                    keywords.append(cleaned)
 
     return keywords
 
@@ -120,10 +175,17 @@ def extract_product_keywords(text: str) -> list:
 def map_subreddit_to_category(subreddit: str, keyword: str) -> str:
     """Best-effort category mapping based on subreddit and keyword content."""
     keyword_lower = keyword.lower()
+    sub_lower = subreddit.lower()
+
+    # Subreddit-driven defaults take priority
+    if sub_lower in BEAUTY_SUBREDDITS:
+        return "beauty"
 
     # Keyword-based mapping
     category_hints = {
-        "beauty": ["nail", "lash", "makeup", "cosmetic", "skincare", "serum", "cream", "hair"],
+        "beauty": ["nail", "lash", "makeup", "cosmetic", "skincare", "serum",
+                   "cream", "hair", "toner", "ampoule", "essence", "sunscreen",
+                   "cleanser", "moisturiz", "moisturis"],
         "jewelry": ["ring", "necklace", "bracelet", "earring", "pendant", "chain", "jewelry", "jewel"],
         "travel": ["luggage", "suitcase", "travel", "packing", "backpack", "passport"],
         "pets": ["pet", "dog", "cat", "collar", "leash", "treat", "toy"],
@@ -140,14 +202,25 @@ def map_subreddit_to_category(subreddit: str, keyword: str) -> str:
     return "general"
 
 
+def _open_conn():
+    """Open a connection in autocommit mode with WAL + busy_timeout."""
+    conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def discover_from_reddit():
     """
     Scan e-commerce subreddits for product keyword mentions.
     High-engagement posts are weighted more heavily.
-    """
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
 
+    Uses autocommit mode to avoid holding long-running write locks while
+    other rate-limiter connections also need to write.
+    """
+    # Read existing keywords once, then close (releases any read lock immediately)
+    conn = _open_conn()
     existing = set(
         row[0].lower() for row in
         conn.execute("SELECT keyword FROM keywords WHERE is_active = 1").fetchall()
@@ -156,6 +229,7 @@ def discover_from_reddit():
         row[0].lower() for row in
         conn.execute("SELECT keyword FROM pending_keywords WHERE status = 'pending'").fetchall()
     )
+    conn.close()
 
     discovered = 0
 
@@ -170,39 +244,39 @@ def discover_from_reddit():
         posts = fetch_subreddit_posts(subreddit, sort="hot", limit=25)
         REDDIT.record_request()
 
-        for post in posts:
-            # Combine title and body for keyword extraction
-            full_text = f"{post['title']} {post['selftext']}"
-            keywords = extract_product_keywords(full_text)
+        # Open per-subreddit connection, write batch, close
+        sub_conn = _open_conn()
+        try:
+            for post in posts:
+                full_text = f"{post['title']} {post['selftext']}"
+                keywords = extract_product_keywords(full_text, subreddit)
 
-            for keyword in keywords:
-                kw_lower = keyword.lower()
-                if kw_lower in existing or kw_lower in already_pending:
-                    continue
+                for keyword in keywords:
+                    kw_lower = keyword.lower()
+                    if kw_lower in existing or kw_lower in already_pending:
+                        continue
 
-                category = map_subreddit_to_category(subreddit, keyword)
+                    category = map_subreddit_to_category(subreddit, keyword)
+                    engagement = post["score"] + post["num_comments"] * 2
+                    relevance = min(1.0, engagement / 500)
 
-                # Relevance score based on post engagement
-                engagement = post["score"] + post["num_comments"] * 2
-                relevance = min(1.0, engagement / 500)
-
-                try:
-                    conn.execute("""
-                        INSERT OR IGNORE INTO pending_keywords
-                        (keyword, suggested_category, source, parent_keyword, relevance_score)
-                        VALUES (?, ?, 'reddit', ?, ?)
-                    """, (kw_lower, category, f"r/{subreddit}", relevance))
-                    discovered += 1
-                    already_pending.add(kw_lower)
-                    logger.info(f"Discovered from Reddit: '{kw_lower}' (r/{subreddit}, relevance={relevance:.2f})")
-                except Exception as e:
-                    logger.debug(f"Failed to insert keyword '{kw_lower}': {e}")
+                    try:
+                        sub_conn.execute("""
+                            INSERT OR IGNORE INTO pending_keywords
+                            (keyword, suggested_category, source, parent_keyword, relevance_score)
+                            VALUES (?, ?, 'reddit', ?, ?)
+                        """, (kw_lower, category, f"r/{subreddit}", relevance))
+                        discovered += 1
+                        already_pending.add(kw_lower)
+                        logger.info(f"Discovered from Reddit: '{kw_lower}' (r/{subreddit}, relevance={relevance:.2f})")
+                    except Exception as e:
+                        logger.debug(f"Failed to insert keyword '{kw_lower}': {e}")
+        finally:
+            sub_conn.close()
 
         # Be respectful to Reddit
         time.sleep(2)
 
-    conn.commit()
-    conn.close()
     logger.info(f"Reddit discovery complete. {discovered} new keywords found.")
     return discovered
 

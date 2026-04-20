@@ -127,14 +127,22 @@ def fetch_etsy_trending_from_search(query: str) -> list:
         return []
 
 
+def _open_conn():
+    """Open SQLite connection in autocommit mode with WAL + busy_timeout."""
+    conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def discover_from_etsy():
     """
     Discover trending product keywords from Etsy search suggestions
     and trending items across tracked categories.
     """
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-
+    # Read existing keywords once, then close
+    conn = _open_conn()
     existing = set(
         row[0].lower() for row in
         conn.execute("SELECT keyword FROM keywords WHERE is_active = 1").fetchall()
@@ -143,13 +151,13 @@ def discover_from_etsy():
         row[0].lower() for row in
         conn.execute("SELECT keyword FROM pending_keywords WHERE status = 'pending'").fetchall()
     )
+    conn.close()
 
     # Merge DB categories with seed terms
     active_keywords = get_active_keywords()
     search_terms = {}
     for category, seeds in ETSY_SEARCH_SEEDS.items():
         search_terms[category] = seeds[:]
-    # Add tracked keywords as additional seeds
     for category, kws in active_keywords.items():
         if category not in search_terms:
             search_terms[category] = []
@@ -163,37 +171,42 @@ def discover_from_etsy():
                 ETSY.wait_if_needed()
             except RateLimitExceeded:
                 logger.warning("Etsy rate limit reached. Stopping.")
-                conn.commit()
-                conn.close()
                 return discovered
 
             logger.info(f"Etsy discovery: searching '{seed}' ({category})")
             suggestions = fetch_etsy_search_suggestions(seed)
             ETSY.record_request()
 
-            for suggestion in suggestions:
-                kw_lower = suggestion.strip().lower()
-                if not kw_lower or len(kw_lower) < 3:
-                    continue
-                if kw_lower in existing or kw_lower in already_pending:
-                    continue
+            if not suggestions:
+                time.sleep(3)
+                continue
 
-                try:
-                    conn.execute("""
-                        INSERT OR IGNORE INTO pending_keywords
-                        (keyword, suggested_category, source, parent_keyword, relevance_score)
-                        VALUES (?, ?, 'etsy', ?, ?)
-                    """, (kw_lower, category, seed, 0.6))
-                    discovered += 1
-                    already_pending.add(kw_lower)
-                    logger.info(f"Discovered from Etsy: '{kw_lower}' (seed='{seed}')")
-                except Exception as e:
-                    logger.debug(f"Failed to insert keyword '{kw_lower}': {e}")
+            # Open per-seed connection, write batch, close
+            seed_conn = _open_conn()
+            try:
+                for suggestion in suggestions:
+                    kw_lower = suggestion.strip().lower()
+                    if not kw_lower or len(kw_lower) < 3:
+                        continue
+                    if kw_lower in existing or kw_lower in already_pending:
+                        continue
+
+                    try:
+                        seed_conn.execute("""
+                            INSERT OR IGNORE INTO pending_keywords
+                            (keyword, suggested_category, source, parent_keyword, relevance_score)
+                            VALUES (?, ?, 'etsy', ?, ?)
+                        """, (kw_lower, category, seed, 0.6))
+                        discovered += 1
+                        already_pending.add(kw_lower)
+                        logger.info(f"Discovered from Etsy: '{kw_lower}' (seed='{seed}')")
+                    except Exception as e:
+                        logger.debug(f"Failed to insert keyword '{kw_lower}': {e}")
+            finally:
+                seed_conn.close()
 
             time.sleep(3)
 
-    conn.commit()
-    conn.close()
     logger.info(f"Etsy discovery complete. {discovered} new keywords found.")
     return discovered
 

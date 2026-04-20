@@ -5,7 +5,7 @@ module.exports = {
   apps: [
     {
       name: "nichescope-web",
-      cwd: "/opt/nichescope/frontend",
+      cwd: "/home/muffinman/NicheScope/frontend",
       script: "node_modules/.bin/next",
       args: "start -p 3000",
       env: {
@@ -17,15 +17,15 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       restart_delay: 5000,
-      log_file: "/opt/nichescope/logs/web.log",
-      error_file: "/opt/nichescope/logs/web-error.log",
-      out_file: "/opt/nichescope/logs/web-out.log",
+      log_file: "/home/muffinman/NicheScope/logs/web.log",
+      error_file: "/home/muffinman/NicheScope/logs/web-error.log",
+      out_file: "/home/muffinman/NicheScope/logs/web-out.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss",
       max_memory_restart: "512M",
     },
     {
       name: "nichescope-collectors",
-      cwd: "/opt/nichescope/collectors",
+      cwd: "/home/muffinman/NicheScope/collectors",
       script: "run_scheduler.sh",
       interpreter: "/bin/bash",
       env: {
@@ -35,9 +35,9 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       restart_delay: 10000,
-      log_file: "/opt/nichescope/logs/collectors.log",
-      error_file: "/opt/nichescope/logs/collectors-error.log",
-      out_file: "/opt/nichescope/logs/collectors-out.log",
+      log_file: "/home/muffinman/NicheScope/logs/collectors.log",
+      error_file: "/home/muffinman/NicheScope/logs/collectors-error.log",
+      out_file: "/home/muffinman/NicheScope/logs/collectors-out.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss",
       max_memory_restart: "256M",
       cron_restart: "50 21 * * *",

@@ -19,7 +19,10 @@ TIKTOK_KEYWORD_URL = "https://ads.tiktok.com/creative_radar_api/v1/popular_trend
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    """Open SQLite connection in autocommit mode with WAL + busy_timeout."""
+    conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.row_factory = sqlite3.Row
     return conn
 

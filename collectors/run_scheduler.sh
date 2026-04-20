@@ -1,13 +1,13 @@
 #!/bin/bash
 # Wrapper script for the NicheScope scheduler.
 # Loads environment variables from .env before starting Python.
-cd /opt/nichescope/collectors
+cd /home/muffinman/NicheScope/collectors
 
 # Source the .env file if it exists
-if [ -f /opt/nichescope/.env ]; then
+if [ -f /home/muffinman/NicheScope/.env ]; then
     set -a
-    source /opt/nichescope/.env
+    source /home/muffinman/NicheScope/.env
     set +a
 fi
 
-exec python3 scheduler.py
+exec /home/muffinman/NicheScope/collectors/venv/bin/python scheduler.py
