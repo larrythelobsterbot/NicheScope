@@ -88,16 +88,20 @@ touch tests/__init__.py
 
 - [ ] **Step 2: Write `tests/conftest.py`**
 
+`scripts/init_db.py` defines `init_db()` with a module-level `DB_PATH` captured at import. `scripts/migrate_001_collector_health.py` reads `DB_PATH` from env at import. To target a temp DB we must **set `DB_PATH` before importing** the script, and run each as a fresh module via `runpy`.
+
 ```python
 """Shared pytest fixtures for NicheScope integration tests."""
+import importlib
 import os
+import runpy
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
 
-# Ensure collectors/ is importable from tests
+# Ensure collectors/ and scripts/ are importable from tests
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "collectors"))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -105,18 +109,28 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
-    """A fresh SQLite DB with NicheScope schema, isolated per test."""
+    """A fresh SQLite DB with NicheScope schema + all migrations applied."""
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DB_PATH", str(db_path))
 
-    # Reload config so it picks up the new DB_PATH
-    import importlib
-    import config
-    importlib.reload(config)
+    # Run scripts with the env var already set so their module-level DB_PATH picks it up.
+    runpy.run_path(str(ROOT / "scripts" / "init_db.py"), run_name="__main__")
+    runpy.run_path(str(ROOT / "scripts" / "migrate_001_collector_health.py"), run_name="__main__")
+    # Task 2's migration is applied by tests that need it (not all do).
 
-    # Initialize schema from scripts/init_db.py
-    from init_db import create_tables  # noqa: import after reload
-    create_tables(str(db_path))
+    # Reload config and any already-imported collector modules so they
+    # re-resolve DB_PATH. This is critical: config caches DB_PATH at import.
+    for mod_name in [
+        "config",
+        "similarweb",
+        "youtube_trends",
+        "keepa_collector",
+        "alibaba_collector",
+        "analyzer",
+        "scheduler",
+    ]:
+        if mod_name in sys.modules:
+            importlib.reload(sys.modules[mod_name])
 
     return str(db_path)
 
@@ -127,6 +141,18 @@ def require_env(var_name):
     if not val:
         pytest.skip(f"{var_name} not set; skipping integration test")
     return val
+```
+
+**Note on scripts with top-level side effects:** `init_db.py` and `migrate_001_collector_health.py` perform their work when executed as `__main__`. Both files today guard their work behind `if __name__ == "__main__":` blocks that call `init_db()` or `migrate()`. If `runpy.run_path(..., run_name="__main__")` does not trigger those blocks for any reason, fall back to:
+
+```python
+    # Alternative: execute the module's main function explicitly.
+    import init_db as _init
+    importlib.reload(_init)
+    _init.init_db()
+    import migrate_001_collector_health as _m1
+    importlib.reload(_m1)
+    _m1.migrate()
 ```
 
 - [ ] **Step 3: Write throwaway `tests/test_smoke.py`**
@@ -275,17 +301,24 @@ def migrate(db_path: str) -> None:
         elif row and row[0] == "view":
             conn.execute("DROP VIEW tiktok_trends")
 
-        # 3. (Re)create the back-compat view
+        # 3. (Re)create the back-compat view — widened so that legacy
+        #    analyzer SQL `SELECT ... FROM tiktok_trends WHERE keyword IN (...)
+        #    AND date >= date('now', '-30 days')` keeps working during the
+        #    transition, before Task 9 rewrites the analyzer.
         conn.execute(
             """
             CREATE VIEW tiktok_trends AS
-                SELECT id,
-                       keyword_id,
-                       collected_at,
-                       total_views_30d AS view_count,
-                       video_count_30d AS video_count
-                FROM content_trends
-                WHERE source = 'youtube'
+                SELECT ct.id,
+                       ct.keyword_id,
+                       k.keyword              AS keyword,
+                       ct.collected_at,
+                       DATE(ct.collected_at)  AS date,
+                       ct.total_views_30d     AS view_count,
+                       ct.video_count_30d     AS video_count,
+                       0                      AS ad_count
+                FROM content_trends ct
+                LEFT JOIN keywords k ON k.id = ct.keyword_id
+                WHERE ct.source = 'youtube'
             """
         )
 
@@ -762,12 +795,15 @@ Append to `tests/test_scheduler_env.py`:
 def test_keepa_job_registered_without_env_key(monkeypatch, tmp_path):
     """Keepa job must be registered even if KEEPA_API_KEY is missing at startup."""
     monkeypatch.delenv("KEEPA_API_KEY", raising=False)
-    monkeypatch.setattr("collectors.scheduler._ENV_PATH", str(tmp_path / ".env"))
-    (tmp_path / ".env").write_text("")  # empty but present
 
     import importlib
     import scheduler
     importlib.reload(scheduler)
+
+    # scheduler is imported as top-level name (conftest prepends collectors/ to
+    # sys.path), so patch the attribute on the module object directly.
+    monkeypatch.setattr(scheduler, "_ENV_PATH", str(tmp_path / ".env"))
+    (tmp_path / ".env").write_text("")  # empty but present
 
     # build_scheduler should return a scheduler with 'keepa' registered
     sched = scheduler.build_scheduler()
@@ -1024,13 +1060,22 @@ logger = logging.getLogger(__name__)
 
 
 def _select_keywords(budget: int) -> list:
-    """Return (id, keyword) tuples up to `budget`, prioritized by niche score rank."""
+    """Return (id, keyword) tuples up to `budget`, with weekly rotation.
+
+    Policy (matches spec):
+      - Top 80 keywords by most-recent niche score: every day.
+      - Long-tail (rank 80 to 80+560=640): rotated across 7 days using
+        today's weekday as an offset, so each long-tail keyword is covered
+        once a week.
+      - Budget caps the total returned.
+    """
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
-        # Top keywords by most-recent category niche score, then newest first
-        rows = conn.execute(
+        # All active keywords, ranked by most-recent category niche score.
+        ranked = conn.execute(
             """
-            SELECT k.id, k.keyword, k.category
+            SELECT k.id, k.keyword, k.category,
+                   COALESCE(ns.overall_score, 0) AS score
             FROM keywords k
             LEFT JOIN (
                 SELECT category, MAX(date) AS d FROM niche_scores GROUP BY category
@@ -1038,14 +1083,23 @@ def _select_keywords(budget: int) -> list:
             LEFT JOIN niche_scores ns
                 ON ns.category = k.category AND ns.date = latest.d
             WHERE k.is_active = 1
-            ORDER BY COALESCE(ns.overall_score, 0) DESC, k.added_at DESC
-            LIMIT ?
-            """,
-            (budget,),
+            ORDER BY score DESC, k.added_at DESC
+            """
         ).fetchall()
-        return [(r[0], r[1]) for r in rows]
     finally:
         conn.close()
+
+    top_n = min(80, budget, len(ranked))
+    top = ranked[:top_n]
+
+    longtail_pool = ranked[top_n:top_n + 560]
+    weekday = datetime.now(timezone.utc).weekday()  # 0=Mon..6=Sun
+    slot = len(longtail_pool) // 7 or 1
+    start = (weekday * slot) % max(len(longtail_pool), 1)
+    remaining = budget - len(top)
+    longtail = longtail_pool[start:start + remaining] if remaining > 0 else []
+
+    return [(r[0], r[1]) for r in (top + longtail)]
 
 
 def fetch_trends(client, keyword: str) -> dict:
@@ -1207,6 +1261,7 @@ def test_content_score_from_content_trends(temp_db, monkeypatch):
     migrate(temp_db)
 
     conn = sqlite3.connect(temp_db)
+    conn.row_factory = sqlite3.Row  # _calc_content_score uses row["n"] etc.
     conn.execute(
         "INSERT INTO keywords (id, keyword, category, is_active) VALUES (99, 'acme', 'beauty', 1)"
     )
@@ -1234,6 +1289,7 @@ def test_content_score_defaults_without_data(temp_db):
     migrate(temp_db)
 
     conn = sqlite3.connect(temp_db)
+    conn.row_factory = sqlite3.Row
     conn.execute(
         "INSERT INTO keywords (keyword, category, is_active) VALUES ('x', 'beauty', 1)"
     )
@@ -1371,7 +1427,7 @@ In `build_scheduler()`, find the existing `scheduler.add_job(job_tiktok, ...)` b
 
 - [ ] **Step 2: Edit `scripts/refresh_now.py`**
 
-Replace the `run_tiktok` function (lines 43-46) with:
+After Tasks 11/12/13, `collect_competitor_traffic`, `collect_products`, `collect_alibaba_suppliers`, and `collect_tiktok_trends` all return `(success, count, err)` tuples. The existing `run_*` wrappers in `refresh_now.py` treat their return value as an int — that silently formats the tuple into the summary string. Update every wrapper that now returns a tuple:
 
 ```python
 def run_tiktok():
@@ -1384,6 +1440,26 @@ def run_youtube():
     from youtube_trends import collect_youtube_trends
     success, count, _ = collect_youtube_trends()
     return f"{count} keywords processed"
+
+
+def run_alibaba():
+    from alibaba_collector import collect_alibaba_suppliers
+    success, count, err = collect_alibaba_suppliers()
+    return f"{count} new suppliers discovered" + ("" if success else f" (FAILED: {err})")
+
+
+def run_competitor_traffic():
+    from similarweb import collect_competitor_traffic
+    success, count, err = collect_competitor_traffic()
+    return f"{count} domains updated" + ("" if success else f" (FAILED: {err})")
+
+
+def run_keepa():
+    if not os.getenv("KEEPA_API_KEY"):
+        return "SKIPPED (no KEEPA_API_KEY)"
+    from keepa_collector import collect_products
+    success, count, err = collect_products()
+    return f"{count} products updated" + ("" if success else f" (FAILED: {err})")
 ```
 
 In `COLLECTORS` dict (around line 96), add `"youtube"` immediately after `"tiktok"`:
@@ -1446,7 +1522,16 @@ import sqlite3
 import pytest
 
 
-def test_similarweb_writes_competitor_traffic_row(temp_db):
+def test_similarweb_writes_competitor_traffic_row(temp_db, monkeypatch):
+    # Force similarweb and its config module to re-resolve DB_PATH against
+    # the temp DB. conftest reloads config; similarweb captures get_db at
+    # import time, so reload it here too.
+    import importlib, sys
+    if "config" in sys.modules:
+        importlib.reload(sys.modules["config"])
+    if "similarweb" in sys.modules:
+        importlib.reload(sys.modules["similarweb"])
+
     conn = sqlite3.connect(temp_db)
     conn.execute(
         """INSERT INTO competitors (name, domain, category)
@@ -1709,8 +1794,15 @@ def collect_products():
         cursor = db.cursor()
         total_collected = 0
 
-        # ... (keep the original body of the for-loop from here unchanged,
-        # just incrementing total_collected when a row is written)
+        # Keep the original for-loop body from `collectors/keepa_collector.py`
+        # lines 34-80+ intact: it iterates `tracked.items()`, calls
+        # `api.query(asins, domain="US", history=True)`, upserts into
+        # `products`, and inserts into `product_history`.
+        #
+        # Counting rule: increment total_collected ONCE per successful
+        # `INSERT INTO product_history` (not per ASIN queried, not per
+        # product upsert). A single Keepa call that returns 10 products
+        # should produce 10 product_history rows and total_collected == 10.
 
         db.commit()
         db.close()
@@ -1720,7 +1812,15 @@ def collect_products():
         return (False, 0, str(e))
 ```
 
-Preserve the original `for category, asins in tracked.items(): ...` loop body intact between "keep the original body" and "db.commit()" — this refactor only adds the try/except and the empty-ASIN check at the top.
+**Diff-style guidance for the executing engineer:** the original function currently:
+1. Returns early if `KEEPA_API_KEY` is falsy (keep — but return the tuple instead of `0`).
+2. Calls `api.query(...)` inside the category loop and iterates its products.
+3. Does NOT currently increment any counter.
+
+Your refactor must:
+- Wrap the whole body (after the early-returns) in a single `try/except`.
+- Add `total_collected += 1` **immediately after the `cursor.execute("INSERT INTO product_history ...", ...)` call** inside the existing product loop.
+- Leave the `products` upsert logic unchanged (it already uses `ON CONFLICT`).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2031,6 +2131,14 @@ git commit -m "chore: add google-api-python-client and pytest to requirements"
 5. `pm2 restart nichescope-collectors` (PM2 is the process manager per `ecosystem.config.js`).
 6. Watch `logs/scheduler.log` for "=== YouTube collection started ===" at 8 AM HKT.
 7. After 24 hours, verify `collector_health.items_collected > 0` for google_trends, youtube, keepa (if ASINs exist), similarweb, and alibaba.
+
+## Follow-up items flagged during review
+
+- **Telegram "credentials not configured" spam (~80/day).** Spec context calls this out as a symptom of the env-loading issue. A quick grep of `collectors/telegram_bot.py` shows it reads `TELEGRAM_BOT_TOKEN` via `config.py` (not its own `os.getenv`). Scheduler's new fail-loud `.env` load should make the warnings disappear once the scheduler is restarted with a proper `.env`. If the warnings persist after Task 4 is deployed, audit `telegram_bot.py` for any private env reads that happen at import time — before `scheduler.py`'s `load_env_or_die` has run — and move them behind a function call. Track as a separate follow-up if still firing after 24h.
+
+- **"general" category has 4 orphan keywords** ("hey everyone", "launches are harder than before", etc.) that the Alibaba collector was wasting requests on. Seed-hygiene follow-up for Track 3.
+
+- **`tiktok_trends` back-compat view** is wider than strictly necessary (includes `keyword`, `date`, `ad_count=0`) to keep the legacy analyzer query working between Task 2 and Task 9. Drop in a follow-up release after confirming no other callers.
 
 ## Known limitations accepted by this plan
 
