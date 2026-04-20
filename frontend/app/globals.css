@@ -11,8 +11,8 @@
   --color-beauty: #ff6b8a;
   --color-jewelry: #a78bfa;
   --color-travel: #34d399;
-  --glass-border: rgba(255, 255, 255, 0.06);
-  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --glass-bg: rgba(255, 255, 255, 0.025);
 }
 
 * {
@@ -21,72 +21,54 @@
 
 body {
   background: var(--color-base);
-  color: #e2e8f0;
+  color: #cbd5e1; /* slate-300 — softer default body text */
   font-family: "Outfit", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Ambient gradient background */
+/* Ambient gradient background — subtler than before */
 .ambient-bg {
   position: fixed;
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(255, 107, 138, 0.05), transparent),
-    radial-gradient(ellipse 60% 40% at 80% 20%, rgba(167, 139, 250, 0.04), transparent),
-    radial-gradient(ellipse 70% 50% at 50% 80%, rgba(52, 211, 153, 0.03), transparent),
+    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(255, 107, 138, 0.03), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 20%, rgba(167, 139, 250, 0.025), transparent),
+    radial-gradient(ellipse 70% 50% at 50% 80%, rgba(52, 211, 153, 0.02), transparent),
     var(--color-base);
 }
 
-/* Glassmorphism card */
+/* Glassmorphism card — slightly more subtle */
 .glass-card {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: 16px;
+  border-radius: 14px;
   backdrop-filter: blur(12px);
 }
 
 .glass-card-hover {
-  transition: all 0.3s ease;
+  transition: all 0.25s ease;
 }
 
 .glass-card-hover:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
 }
 
-/* Category accent colors */
-.accent-beauty {
-  color: var(--color-beauty);
-}
-.accent-jewelry {
-  color: var(--color-jewelry);
-}
-.accent-travel {
-  color: var(--color-travel);
-}
+/* Category accent colors — kept for programmatic use */
+.accent-beauty { color: var(--color-beauty); }
+.accent-jewelry { color: var(--color-jewelry); }
+.accent-travel { color: var(--color-travel); }
 
-.bg-beauty {
-  background-color: var(--color-beauty);
-}
-.bg-jewelry {
-  background-color: var(--color-jewelry);
-}
-.bg-travel {
-  background-color: var(--color-travel);
-}
+.bg-beauty { background-color: var(--color-beauty); }
+.bg-jewelry { background-color: var(--color-jewelry); }
+.bg-travel { background-color: var(--color-travel); }
 
-/* Glow effect for high-growth keywords */
-.glow-beauty {
-  text-shadow: 0 0 20px rgba(255, 107, 138, 0.6), 0 0 40px rgba(255, 107, 138, 0.3);
-}
-.glow-jewelry {
-  text-shadow: 0 0 20px rgba(167, 139, 250, 0.6), 0 0 40px rgba(167, 139, 250, 0.3);
-}
-.glow-travel {
-  text-shadow: 0 0 20px rgba(52, 211, 153, 0.6), 0 0 40px rgba(52, 211, 153, 0.3);
+/* Glow — reserved ONLY for breakout / critical alerts */
+.glow-alert {
+  text-shadow: 0 0 12px rgba(239, 68, 68, 0.5), 0 0 24px rgba(239, 68, 68, 0.2);
 }
 
 /* Staggered entrance animations */
@@ -96,19 +78,19 @@ body {
 .stagger-4 { animation-delay: 0.4s; }
 .stagger-5 { animation-delay: 0.5s; }
 
-/* Custom scrollbar */
+/* Custom scrollbar — thinner, subtler */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.07);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.14);
 }
 
 /* Quality bar segments */
@@ -120,19 +102,19 @@ body {
   width: 8px;
   height: 16px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
 }
 .quality-segment.filled {
   background: var(--color-travel);
 }
 
-/* Recharts overrides */
+/* Recharts overrides — muted axis and grid */
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line {
-  stroke: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.04);
 }
 .recharts-text {
-  fill: #94a3b8;
+  fill: #64748b; /* slate-500 — muted axis labels */
   font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
+  font-size: 10px;
 }

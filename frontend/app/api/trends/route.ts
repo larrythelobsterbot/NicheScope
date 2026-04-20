@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
 
   try {
     let sql = `
-      SELECT k.keyword, k.category, td.date, td.interest_score,
+      SELECT k.keyword, k.category, k.subcategory, td.date, td.interest_score,
              td.related_rising, td.region_data
       FROM trend_data td
       JOIN keywords k ON td.keyword_id = k.id
@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     const rows = await queryAll<{
       keyword: string;
       category: string;
+      subcategory: string | null;
       date: string;
       interest_score: number;
       related_rising: string | null;
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
       {
         keyword: string;
         category: string;
+        subcategory: string | null;
         history: { date: string; interest_score: number }[];
         related_rising: string[];
         region_data: Record<string, number>;
@@ -50,6 +52,7 @@ export async function GET(request: NextRequest) {
         keywordMap.set(row.keyword, {
           keyword: row.keyword,
           category: row.category,
+          subcategory: row.subcategory || null,
           history: [],
           related_rising: [],
           region_data: {},

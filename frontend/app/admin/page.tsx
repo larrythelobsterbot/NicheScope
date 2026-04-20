@@ -10,8 +10,9 @@ import PendingKeywords from "@/components/PendingKeywords";
 import CollectorStatus from "@/components/CollectorStatus";
 import AdminPanel from "@/components/AdminPanel";
 import BulkImport from "@/components/BulkImport";
+import ClipboardImport from "@/components/ClipboardImport";
 
-type AdminTab = "keywords" | "pending" | "collectors" | "import";
+type AdminTab = "keywords" | "pending" | "paste" | "import" | "collectors";
 
 interface KeywordRow {
   id: number;
@@ -45,9 +46,8 @@ export default function AdminPage() {
       setColorMap(getCategoryColorMap(cats));
       setPending(pendingData.pending || []);
 
-      // Fetch all keywords (active and inactive) for the keyword table
-      // We use a special param to get all keywords including inactive
-      const kwRes = await fetch("/api/keywords?limit=500");
+      // Fetch all keywords for the admin keyword table
+      const kwRes = await fetch("/api/keywords?all=true");
       const kwData = await kwRes.json();
       setKeywords(kwData.keywords || []);
     } catch (error) {
@@ -140,7 +140,8 @@ export default function AdminPage() {
   const tabs = [
     { key: "keywords" as const, label: "Watchlist", count: keywords.length },
     { key: "pending" as const, label: "Pending", count: pending.length },
-    { key: "import" as const, label: "Bulk Import", count: 0 },
+    { key: "paste" as const, label: "Paste Import", count: 0 },
+    { key: "import" as const, label: "CSV Import", count: 0 },
     { key: "collectors" as const, label: "Collectors", count: 0 },
   ];
 
@@ -237,6 +238,12 @@ export default function AdminPage() {
                 pending={pending}
                 colorMap={colorMap}
                 onAction={handlePendingAction}
+              />
+            )}
+            {activeTab === "paste" && (
+              <ClipboardImport
+                categories={categories.map((c) => c.name)}
+                onImportComplete={fetchData}
               />
             )}
             {activeTab === "import" && (

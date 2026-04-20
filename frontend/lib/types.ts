@@ -19,6 +19,7 @@ export interface TrendDataPoint {
 export interface KeywordTrend {
   keyword: string;
   category: string;
+  subcategory: string | null;
   current_interest: number;
   velocity_4w: number;
   velocity_12w: number;

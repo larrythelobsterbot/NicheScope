@@ -20,12 +20,22 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export default function PendingKeywords({ pending, colorMap, onAction }: PendingKeywordsProps) {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const filtered =
-    sourceFilter === "all"
-      ? pending
-      : pending.filter((pk) => pk.source === sourceFilter);
+  // Build category counts from all pending keywords
+  const categoryCounts: Record<string, number> = {};
+  for (const pk of pending) {
+    const cat = pk.suggested_category || "uncategorized";
+    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+  }
+  const categoryNames = Object.keys(categoryCounts).sort();
+
+  const filtered = pending.filter((pk) => {
+    if (sourceFilter !== "all" && pk.source !== sourceFilter) return false;
+    if (categoryFilter !== "all" && pk.suggested_category !== categoryFilter) return false;
+    return true;
+  });
 
   const sorted = [...filtered].sort(
     (a, b) => (b.relevance_score || 0) - (a.relevance_score || 0)
@@ -92,6 +102,37 @@ export default function PendingKeywords({ pending, colorMap, onAction }: Pending
             </button>
           );
         })}
+      </div>
+
+      {/* Category filter */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[10px] text-slate-600 mr-1">Category:</span>
+        <button
+          onClick={() => setCategoryFilter("all")}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+            categoryFilter === "all"
+              ? "bg-white/10 text-white"
+              : "text-slate-500 hover:text-slate-300 bg-white/[0.02]"
+          }`}
+        >
+          All<span className="ml-1 opacity-50">{pending.length}</span>
+        </button>
+        {categoryNames.map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setCategoryFilter(cat)}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+              categoryFilter === cat
+                ? "bg-white/10 text-white"
+                : "text-slate-500 hover:text-slate-300 bg-white/[0.02]"
+            }`}
+          >
+            <span style={{ color: categoryFilter === cat ? colorMap[cat] || "#94A3B8" : undefined }}>
+              {cat.replace(/_/g, " ")}
+            </span>
+            <span className="ml-1 opacity-50">{categoryCounts[cat]}</span>
+          </button>
+        ))}
       </div>
 
       {/* Bulk actions bar */}

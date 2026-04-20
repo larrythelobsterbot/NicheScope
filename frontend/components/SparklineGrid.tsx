@@ -6,21 +6,21 @@ import Sparkline from "./Sparkline";
 
 interface SparklineGridProps {
   trends: KeywordTrend[];
-  selectedCategory?: string | null;
   colorMap?: Record<string, string>;
+}
+
+/** Map velocity_4w to an explicit trend direction for sparkline coloring. */
+function velocityToTrend(v: number): "up" | "down" | "flat" {
+  if (v > 0) return "up";
+  if (v < 0) return "down";
+  return "flat";
 }
 
 export default function SparklineGrid({
   trends,
-  selectedCategory,
   colorMap = {},
 }: SparklineGridProps) {
-  const filtered = selectedCategory
-    ? trends.filter((t) => t.category === selectedCategory)
-    : trends;
-
-  // Sort by current interest descending, take top 12
-  const sorted = [...filtered]
+  const sorted = [...trends]
     .sort((a, b) => b.current_interest - a.current_interest)
     .slice(0, 12);
 
@@ -41,43 +41,50 @@ export default function SparklineGrid({
           .sort((a, b) => a.date.localeCompare(b.date))
           .map((h) => h.interest_score);
 
-        const velocityColor = trend.velocity_4w >= 0 ? "#34D399" : "#EF4444";
+        const direction = velocityToTrend(trend.velocity_4w);
 
         return (
           <div
             key={trend.keyword}
-            className="glass-card p-3 flex flex-col justify-between"
+            className="glass-card p-4 flex flex-col justify-between"
           >
             {/* Keyword name + category dot */}
-            <div className="flex items-start gap-2 mb-2">
+            <div className="flex items-start gap-2 mb-2.5">
               <span
-                className="w-2 h-2 rounded-full mt-1 shrink-0"
+                className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
                 style={{ backgroundColor: color }}
               />
-              <span className="text-xs text-slate-300 font-medium leading-tight line-clamp-2">
+              <span className="text-xs text-slate-400 font-medium leading-tight line-clamp-2">
                 {trend.keyword}
               </span>
             </div>
 
-            {/* Sparkline */}
-            <div className="mb-2">
+            {/* Sparkline — color driven by velocity_4w sign */}
+            <div className="mb-2.5">
               <Sparkline
                 data={history}
                 width={140}
                 height={32}
-                color={color}
+                trend={direction}
                 strokeWidth={1.5}
               />
             </div>
 
             {/* Stats row */}
             <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-bold" style={{ color }}>
+              <span className="font-mono text-sm font-semibold text-slate-200">
                 {trend.current_interest}
               </span>
               <span
-                className="font-mono text-[11px] font-medium"
-                style={{ color: velocityColor }}
+                className="font-mono text-[10px] font-medium"
+                style={{
+                  color:
+                    trend.velocity_4w > 0
+                      ? "#34D399"
+                      : trend.velocity_4w < 0
+                      ? "#FB7185"
+                      : "#64748B",
+                }}
               >
                 {formatPercent(trend.velocity_4w)}
               </span>

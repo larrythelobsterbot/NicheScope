@@ -5,8 +5,31 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const rising = searchParams.get("rising") === "true";
   const limit = parseInt(searchParams.get("limit") || "20", 10);
+  const all = searchParams.get("all") === "true";
 
   try {
+    // Admin mode: return all keywords regardless of trend data
+    if (all) {
+      const rows = await queryAll<{
+        id: number;
+        keyword: string;
+        category: string;
+        subcategory: string | null;
+        is_active: number;
+      }>(
+        `SELECT id, keyword, category, subcategory, is_active
+         FROM keywords
+         ORDER BY category, keyword`
+      );
+
+      return NextResponse.json({
+        keywords: rows.map((r) => ({
+          ...r,
+          is_active: r.is_active === 1,
+        })),
+      });
+    }
+
     // Get keywords with latest trend data and calculated velocity
     const rows = await queryAll<{
       keyword: string;

@@ -1,0 +1,7 @@
+#!/bin/bash
+# Wrapper around frontend/nichescope-query.mjs that runs from the frontend
+# directory so Node's ESM resolver can find @libsql/client in node_modules.
+
+set -e
+cd "$(dirname "$0")/../frontend"
+exec node nichescope-query.mjs "$@"

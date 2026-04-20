@@ -20,10 +20,9 @@ export function velocityToSize(velocity: number, min = 14, max = 48): number {
 }
 
 export function scoreToColor(score: number): string {
-  if (score >= 80) return "#34D399";
-  if (score >= 60) return "#FBBF24";
-  if (score >= 40) return "#FB923C";
-  return "#EF4444";
+  if (score >= 80) return "#34D399"; // emerald-400 — strong
+  if (score >= 50) return "#FBBF24"; // amber-400  — moderate
+  return "#FB7185";                  // rose-400   — weak
 }
 
 export function severityToColor(severity: string): string {

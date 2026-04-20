@@ -25,7 +25,8 @@ export default function KeywordTable({ keywords, colorMap, onToggle, onAdd }: Ke
   const filtered = keywords.filter(
     (k) =>
       k.keyword.toLowerCase().includes(filter.toLowerCase()) ||
-      k.category.toLowerCase().includes(filter.toLowerCase())
+      k.category.toLowerCase().includes(filter.toLowerCase()) ||
+      (k.subcategory && k.subcategory.toLowerCase().includes(filter.toLowerCase()))
   );
 
   const handleAdd = () => {
@@ -68,7 +69,7 @@ export default function KeywordTable({ keywords, colorMap, onToggle, onAdd }: Ke
         type="text"
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
-        placeholder="Filter keywords..."
+        placeholder="Filter keywords, categories, or subcategories..."
         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-white/20"
       />
 
@@ -79,6 +80,7 @@ export default function KeywordTable({ keywords, colorMap, onToggle, onAdd }: Ke
             <tr>
               <th className="text-left py-2 px-2">Keyword</th>
               <th className="text-left py-2 px-2">Category</th>
+              <th className="text-left py-2 px-2">Subcategory</th>
               <th className="text-center py-2 px-2">Status</th>
             </tr>
           </thead>
@@ -95,8 +97,17 @@ export default function KeywordTable({ keywords, colorMap, onToggle, onAdd }: Ke
                       className="w-1.5 h-1.5 rounded-full"
                       style={{ backgroundColor: colorMap[kw.category] || "#94A3B8" }}
                     />
-                    {kw.category}
+                    {kw.category.replace(/_/g, " ")}
                   </span>
+                </td>
+                <td className="py-2 px-2">
+                  {kw.subcategory ? (
+                    <span className="text-[10px] text-slate-400 px-2 py-0.5 rounded-full bg-white/[0.04] capitalize">
+                      {kw.subcategory.replace(/_/g, " ")}
+                    </span>
+                  ) : (
+                    <span className="text-slate-600 text-[10px]">&mdash;</span>
+                  )}
                 </td>
                 <td className="py-2 px-2 text-center">
                   <button
