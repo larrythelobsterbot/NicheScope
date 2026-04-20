@@ -54,64 +54,71 @@ def normalize_price(price_str: str) -> tuple:
 
 
 def collect_alibaba_suppliers():
-    """Search Alibaba for suppliers matching tracked keywords."""
-    keywords = get_active_keywords()
-    db = get_db()
-    total_collected = 0
+    """Search Alibaba for suppliers matching tracked keywords.
 
-    for category, kw_list in keywords.items():
-        # Only search a few keywords per category to stay within rate limits
-        for keyword in kw_list[:3]:
-            logger.info(f"Searching Alibaba for: {keyword} ({category})")
+    Returns (success, items_written, error | None). Never raises.
+    """
+    try:
+        keywords = get_active_keywords()
+        db = get_db()
+        total_collected = 0
 
-            try:
-                ALIBABA_SCRAPE.wait_if_needed()
-            except RateLimitExceeded as e:
-                logger.warning(f"Stopping Alibaba collection: {e}")
-                db.close()
-                return total_collected
+        for category, kw_list in keywords.items():
+            # Only search a few keywords per category to stay within rate limits
+            for keyword in kw_list[:3]:
+                logger.info(f"Searching Alibaba for: {keyword} ({category})")
 
-            if ALIBABA_APP_KEY:
-                results = search_alibaba_api(keyword)
-            else:
-                results = search_alibaba_scrape(keyword)
-
-            for supplier in results:
                 try:
-                    price_low, price_high = normalize_price(supplier.get("price", ""))
-                    db.execute(
-                        """INSERT OR IGNORE INTO suppliers
-                           (name, region, product_focus, price_range, price_low, price_high, moq,
-                            lead_time, quality_score, certifications, contact_url, notes)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            supplier.get("name", "Unknown"),
-                            supplier.get("region", ""),
-                            supplier.get("product", ""),
-                            supplier.get("price", ""),
-                            price_low,
-                            price_high,
-                            supplier.get("moq", ""),
-                            supplier.get("lead_time", ""),
-                            supplier.get("quality", 5),
-                            supplier.get("certs", "[]"),
-                            supplier.get("url", ""),
-                            f"Auto-discovered for: {keyword} ({category})",
-                        ),
-                    )
-                    if db.total_changes:
-                        total_collected += 1
-                except Exception as e:
-                    logger.warning(f"Failed to store supplier: {e}")
+                    ALIBABA_SCRAPE.wait_if_needed()
+                except RateLimitExceeded as e:
+                    logger.warning(f"Stopping Alibaba collection: {e}")
+                    db.close()
+                    return (True, total_collected, str(e))
 
-            ALIBABA_SCRAPE.record_request()
-            db.commit()
-            # Rate limit: 30+ seconds between keyword searches
-            time.sleep(35)
+                if ALIBABA_APP_KEY:
+                    results = search_alibaba_api(keyword)
+                else:
+                    results = search_alibaba_scrape(keyword)
 
-    db.close()
-    logger.info(f"Alibaba collection complete. {total_collected} new suppliers discovered.")
-    return total_collected
+                for supplier in results:
+                    try:
+                        price_low, price_high = normalize_price(supplier.get("price", ""))
+                        db.execute(
+                            """INSERT OR IGNORE INTO suppliers
+                               (name, region, product_focus, price_range, price_low, price_high, moq,
+                                lead_time, quality_score, certifications, contact_url, notes)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                supplier.get("name", "Unknown"),
+                                supplier.get("region", ""),
+                                supplier.get("product", ""),
+                                supplier.get("price", ""),
+                                price_low,
+                                price_high,
+                                supplier.get("moq", ""),
+                                supplier.get("lead_time", ""),
+                                supplier.get("quality", 5),
+                                supplier.get("certs", "[]"),
+                                supplier.get("url", ""),
+                                f"Auto-discovered for: {keyword} ({category})",
+                            ),
+                        )
+                        if db.total_changes:
+                            total_collected += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to store supplier: {e}")
+
+                ALIBABA_SCRAPE.record_request()
+                db.commit()
+                # Rate limit: 30+ seconds between keyword searches
+                time.sleep(35)
+
+        db.close()
+        logger.info(f"Alibaba collection complete. {total_collected} new suppliers discovered.")
+        return (True, total_collected, None)
+    except Exception as e:
+        logger.error(f"Alibaba top-level error: {e}", exc_info=True)
+        return (False, 0, str(e))
 
 
 def search_alibaba_api(keyword: str) -> list:
@@ -152,6 +159,55 @@ def search_alibaba_api(keyword: str) -> list:
         return []
 
 
+def parse_search_html(html: str, keyword: str) -> list:
+    """Parse Alibaba search HTML into a list of supplier dicts.
+
+    NOTE: Selectors below are known-stale as of 2026-04-20. Alibaba bot-blocks
+    direct unauthenticated fetches from the collector IP (returns a captcha /
+    punish page instead of real results), so we cannot currently capture a
+    valid response to re-derive selectors. Selector fix is deferred to a
+    follow-up track; this function is kept as the single parsing entry-point
+    so tests and refactors can target it once a real fixture is available.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+
+    # Parse product cards from search results (selectors known-stale; see docstring)
+    cards = soup.select(".organic-list .list-no-v2-outter .J-offer-wrapper")
+    if not cards:
+        cards = soup.select("[class*='offer']")
+
+    for card in cards[:10]:
+        try:
+            name_el = card.select_one("[class*='company']")
+            title_el = card.select_one("[class*='title']") or card.select_one("h2")
+            price_el = card.select_one("[class*='price']")
+            moq_el = card.select_one("[class*='moq']") or card.select_one("[class*='min-order']")
+            location_el = card.select_one("[class*='location']")
+
+            results.append({
+                "name": name_el.get_text(strip=True) if name_el else "Unknown Supplier",
+                "region": location_el.get_text(strip=True) if location_el else "",
+                "product": title_el.get_text(strip=True)[:100] if title_el else keyword,
+                "price": price_el.get_text(strip=True) if price_el else "",
+                "moq": moq_el.get_text(strip=True) if moq_el else "",
+                "quality": 5,
+                "certs": "[]",
+                "url": "",
+            })
+        except Exception as e:
+            logger.debug(f"Failed to parse card: {e}")
+            continue
+
+    if not results:
+        logger.warning(
+            f"Alibaba parser found 0 cards for '{keyword}'. "
+            "DOM may have drifted or IP is bot-blocked; "
+            "re-capture tests/fixtures/alibaba_search_sample.html from a clean environment."
+        )
+    return results
+
+
 def search_alibaba_scrape(keyword: str) -> list:
     """Fallback: scrape Alibaba search results. Use carefully."""
     import random
@@ -174,36 +230,7 @@ def search_alibaba_scrape(keyword: str) -> list:
                 logger.warning(f"Alibaba returned {response.status_code} for '{keyword}'")
                 return []
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            results = []
-
-            # Parse product cards from search results
-            cards = soup.select(".organic-list .list-no-v2-outter .J-offer-wrapper")
-            if not cards:
-                cards = soup.select("[class*='offer']")
-
-            for card in cards[:10]:
-                try:
-                    name_el = card.select_one("[class*='company']")
-                    title_el = card.select_one("[class*='title']") or card.select_one("h2")
-                    price_el = card.select_one("[class*='price']")
-                    moq_el = card.select_one("[class*='moq']") or card.select_one("[class*='min-order']")
-                    location_el = card.select_one("[class*='location']")
-
-                    results.append({
-                        "name": name_el.get_text(strip=True) if name_el else "Unknown Supplier",
-                        "region": location_el.get_text(strip=True) if location_el else "",
-                        "product": title_el.get_text(strip=True)[:100] if title_el else keyword,
-                        "price": price_el.get_text(strip=True) if price_el else "",
-                        "moq": moq_el.get_text(strip=True) if moq_el else "",
-                        "quality": 5,
-                        "certs": "[]",
-                        "url": "",
-                    })
-                except Exception as e:
-                    logger.debug(f"Failed to parse card: {e}")
-                    continue
-
+            results = parse_search_html(response.text, keyword)
             logger.info(f"Scraped {len(results)} suppliers for '{keyword}'")
             return results
 
