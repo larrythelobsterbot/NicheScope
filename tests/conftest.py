@@ -1,7 +1,6 @@
 """Shared pytest fixtures for NicheScope integration tests."""
 import importlib
 import os
-import runpy
 import sqlite3
 import sys
 from pathlib import Path
@@ -23,7 +22,6 @@ def temp_db(tmp_path, monkeypatch):
     # init_db.py captures DB_PATH at import with no env fallback, so we
     # import it, override DB_PATH on the module, and call init_db() directly.
     import init_db as _init
-    importlib.reload(_init)
     _init.DB_PATH = str(db_path)
     _init.init_db()
 
@@ -34,19 +32,19 @@ def temp_db(tmp_path, monkeypatch):
     _m1.migrate()
     # Task 2's migration is applied by tests that need it (not all do).
 
-    # Reload config and any already-imported collector modules so they
-    # re-resolve DB_PATH. This is critical: config caches DB_PATH at import.
-    for mod_name in [
-        "config",
-        "similarweb",
-        "youtube_trends",
-        "keepa_collector",
-        "alibaba_collector",
-        "analyzer",
-        "scheduler",
-    ]:
-        if mod_name in sys.modules:
-            importlib.reload(sys.modules[mod_name])
+    # config MUST be reloaded first - collectors bind `from config import DB_PATH`
+    # at their module top, so they need a fresh config.DB_PATH before their
+    # own reload re-imports it.
+    if "config" in sys.modules:
+        importlib.reload(sys.modules["config"])
+
+    collectors_dir = str(ROOT / "collectors")
+    for name, module in list(sys.modules.items()):
+        if name == "config":
+            continue
+        module_file = getattr(module, "__file__", None) or ""
+        if module_file.startswith(collectors_dir):
+            importlib.reload(module)
 
     return str(db_path)
 
