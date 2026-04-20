@@ -1,5 +1,12 @@
 """TikTok Creative Center trends scraper."""
 
+import warnings as _warnings
+_warnings.warn(
+    "tiktok_trends is deprecated; Creative Center is gated. Use youtube_trends.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import sqlite3
 import json
 import logging
@@ -106,80 +113,9 @@ def fetch_ad_count(keyword: str) -> int:
 
 
 def collect_tiktok_trends():
-    """Collect TikTok trend data for all watchlist keywords."""
-    db = get_db()
-    cursor = db.cursor()
-    total_collected = 0
-    consecutive_permission_errors = 0
-    MAX_PERMISSION_ERRORS = 3
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-
-    watchlist = get_active_keywords()
-
-    for category, keywords in watchlist.items():
-        for keyword in keywords:
-            logger.info(f"Collecting TikTok trends for: {keyword}")
-
-            try:
-                TIKTOK.wait_if_needed()
-            except RateLimitExceeded as e:
-                logger.warning(f"Stopping TikTok collection: {e}")
-                db.commit()
-                db.close()
-                return total_collected
-
-            hashtags = fetch_trending_hashtags(keyword)
-            TIKTOK.record_request()
-
-            # Detect persistent permission errors (API access revoked)
-            if not hashtags:
-                consecutive_permission_errors += 1
-                if consecutive_permission_errors >= MAX_PERMISSION_ERRORS:
-                    logger.error(
-                        f"TikTok API returning empty results for {consecutive_permission_errors} "
-                        f"consecutive keywords. API may require authentication now. Stopping."
-                    )
-                    db.commit()
-                    db.close()
-                    return total_collected
-                time.sleep(3)
-                continue
-            else:
-                consecutive_permission_errors = 0
-
-            ad_count = fetch_ad_count(keyword)
-            TIKTOK.record_request()
-
-            total_views = sum(h.get("view_count", 0) for h in hashtags)
-            total_videos = sum(h.get("video_count", 0) for h in hashtags)
-            top_hashtag = hashtags[0]["hashtag"] if hashtags else ""
-
-            try:
-                cursor.execute(
-                    """INSERT OR REPLACE INTO tiktok_trends
-                       (keyword, hashtag, video_count, view_count, ad_count, date, collected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        keyword,
-                        top_hashtag,
-                        total_videos,
-                        total_views,
-                        ad_count,
-                        today,
-                        datetime.utcnow().isoformat(),
-                    ),
-                )
-                total_collected += 1
-            except Exception as e:
-                logger.error(f"Failed to store TikTok data for '{keyword}': {e}")
-
-            # Rate limiting
-            time.sleep(3)
-
-    db.commit()
-    db.close()
-    logger.info(f"TikTok collection complete. {total_collected} keywords processed.")
-    return total_collected
+    """Deprecated no-op. See youtube_trends.collect_youtube_trends()."""
+    logger.info("TikTok collector is deprecated (source gated). Returning 0.")
+    return (True, 0, "deprecated")
 
 
 if __name__ == "__main__":

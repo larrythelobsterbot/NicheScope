@@ -49,6 +49,7 @@ from config import DB_PATH, SCHEDULE, get_active_keywords
 from google_trends import collect_trends
 from keepa_collector import collect_products, detect_anomalies
 from tiktok_trends import collect_tiktok_trends
+from youtube_trends import collect_youtube_trends
 from alibaba_collector import collect_alibaba_suppliers
 from similarweb import collect_competitor_traffic
 from analyzer import run_analysis, detect_breakouts
@@ -238,9 +239,17 @@ def job_keepa():
 
 
 def job_tiktok():
-    logger.info("=== TikTok trends collection started ===")
-    success, count, err = run_collector_job("tiktok", collect_tiktok_trends)
-    if success:
+    logger.info("=== TikTok collection skipped (deprecated, see YouTube collector) ===")
+    return (True, 0, "deprecated")
+
+
+def job_youtube():
+    logger.info("=== YouTube collection started ===")
+    if not os.getenv("YOUTUBE_API_KEY"):
+        logger.warning("YOUTUBE_API_KEY not set; skipping this run.")
+        return (True, 0, "YOUTUBE_API_KEY not set")
+    success, count, err = run_collector_job("youtube", collect_youtube_trends)
+    if success and count > 0:
         run_post_collection()
     return (success, count, err)
 
@@ -410,6 +419,19 @@ def build_scheduler() -> BlockingScheduler:
         ),
         id="tiktok",
         name="TikTok Trends Collector",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+    scheduler.add_job(
+        job_youtube,
+        CronTrigger(
+            hour=SCHEDULE["youtube"]["hour"],
+            minute=SCHEDULE["youtube"]["minute"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="youtube",
+        name="YouTube Trends Collector",
         misfire_grace_time=3600,
         coalesce=True,
     )

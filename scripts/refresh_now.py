@@ -41,29 +41,35 @@ def run_google_trends():
 
 
 def run_tiktok():
-    from tiktok_trends import collect_tiktok_trends
-    count = collect_tiktok_trends()
+    return "SKIPPED (deprecated — replaced by YouTube)"
+
+
+def run_youtube():
+    if not os.getenv("YOUTUBE_API_KEY"):
+        return "SKIPPED (no YOUTUBE_API_KEY)"
+    from youtube_trends import collect_youtube_trends
+    success, count, _ = collect_youtube_trends()
     return f"{count} keywords processed"
 
 
 def run_alibaba():
     from alibaba_collector import collect_alibaba_suppliers
-    count = collect_alibaba_suppliers()
-    return f"{count} new suppliers discovered"
+    success, count, err = collect_alibaba_suppliers()
+    return f"{count} new suppliers discovered" + ("" if success else f" (FAILED: {err})")
 
 
 def run_competitor_traffic():
     from similarweb import collect_competitor_traffic
-    count = collect_competitor_traffic()
-    return f"{count} domains updated"
+    success, count, err = collect_competitor_traffic()
+    return f"{count} domains updated" + ("" if success else f" (FAILED: {err})")
 
 
 def run_keepa():
     if not os.getenv("KEEPA_API_KEY"):
         return "SKIPPED (no KEEPA_API_KEY)"
     from keepa_collector import collect_products
-    count = collect_products()
-    return f"{count} products updated"
+    success, count, err = collect_products()
+    return f"{count} products updated" + ("" if success else f" (FAILED: {err})")
 
 
 def run_discovery():
@@ -96,6 +102,7 @@ def run_analysis():
 COLLECTORS = {
     "google_trends":      ("Google Trends",        run_google_trends),
     "tiktok":             ("TikTok Trends",        run_tiktok),
+    "youtube":            ("YouTube Trends",       run_youtube),
     "discovery":          ("Discovery (category)",  run_discovery),
     "reddit":             ("Reddit Discovery",      run_reddit),
     "etsy":               ("Etsy Discovery",        run_etsy),
