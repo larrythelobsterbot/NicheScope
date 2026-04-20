@@ -31,6 +31,7 @@ from analyzer import run_analysis, detect_breakouts
 from discovery import run_discovery
 from reddit_discovery import discover_from_reddit
 from etsy_discovery import discover_from_etsy
+from amazon_bestsellers import collect_amazon_bestsellers
 from telegram_bot import (
     send_daily_digest,
     send_discovery_digest,
@@ -288,6 +289,17 @@ def job_etsy_discovery():
         raise
 
 
+def job_amazon_bestsellers():
+    logger.info("=== Amazon Best Sellers discovery started ===")
+    try:
+        count = collect_amazon_bestsellers()
+        logger.info(f"Amazon Best Sellers: {count} new pending keywords")
+        send_discovery_digest()
+    except Exception as e:
+        logger.error(f"Amazon Best Sellers discovery failed: {e}", exc_info=True)
+        raise
+
+
 def run_post_collection():
     """Run analysis after a collector finishes."""
     try:
@@ -431,6 +443,16 @@ def main():
         CronTrigger(day_of_week="mon,thu", hour=4, minute=30, timezone="Asia/Hong_Kong"),
         id="etsy_discovery",
         name="Etsy Discovery",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+    # Amazon Best Sellers: daily at 5am HKT
+    scheduler.add_job(
+        job_amazon_bestsellers,
+        CronTrigger(hour=5, minute=0, timezone="Asia/Hong_Kong"),
+        id="amazon_bestsellers",
+        name="Amazon Best Sellers Discovery",
         misfire_grace_time=3600,
         coalesce=True,
     )

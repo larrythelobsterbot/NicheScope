@@ -84,6 +84,12 @@ def run_etsy():
     return f"{count} new pending keywords"
 
 
+def run_amazon_bestsellers():
+    from amazon_bestsellers import collect_amazon_bestsellers
+    count = collect_amazon_bestsellers()
+    return f"{count} new pending keywords"
+
+
 def run_analysis():
     from analyzer import run_analysis as _run_analysis
     results = _run_analysis()
@@ -94,15 +100,16 @@ def run_analysis():
 # ── Registry: order matters (cheapest/fastest API calls first)
 
 COLLECTORS = {
-    "google_trends":      ("Google Trends",        run_google_trends),
-    "tiktok":             ("TikTok Trends",        run_tiktok),
-    "discovery":          ("Discovery (category)",  run_discovery),
-    "reddit":             ("Reddit Discovery",      run_reddit),
-    "etsy":               ("Etsy Discovery",        run_etsy),
-    "alibaba":            ("Alibaba Suppliers",     run_alibaba),
-    "competitor_traffic":  ("Competitor Traffic",    run_competitor_traffic),
-    "keepa":              ("Keepa (Amazon)",        run_keepa),
-    "analysis":           ("Niche Analysis",        run_analysis),
+    "google_trends":      ("Google Trends",            run_google_trends),
+    "tiktok":             ("TikTok Trends",            run_tiktok),
+    "discovery":          ("Discovery (category)",     run_discovery),
+    "reddit":             ("Reddit Discovery",         run_reddit),
+    "etsy":               ("Etsy Discovery",           run_etsy),
+    "amazon_bestsellers": ("Amazon Best Sellers",      run_amazon_bestsellers),
+    "alibaba":            ("Alibaba Suppliers",        run_alibaba),
+    "competitor_traffic":  ("Competitor Traffic",       run_competitor_traffic),
+    "keepa":              ("Keepa (Amazon)",           run_keepa),
+    "analysis":           ("Niche Analysis",           run_analysis),
 }
 
 # Slow collectors skipped in --fast mode (Etsy ~82min, SimilarWeb ~50min, Alibaba ~31min)
