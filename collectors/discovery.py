@@ -17,6 +17,7 @@ import sqlite3
 import time
 import logging
 from config import DB_PATH, get_active_keywords
+from keyword_filter import is_junk
 from rate_limiter import GOOGLE_TRENDS, RateLimitExceeded
 from discovery_feedback import get_source_weights, should_skip_source, get_productive_parents
 
@@ -111,6 +112,11 @@ def discover_from_google_categories():
                 if not topic or topic in existing or topic in already_pending:
                     continue
 
+                junk, reason = is_junk(topic)
+                if junk:
+                    logger.debug(f"Filtered junk keyword: '{topic}' ({reason})")
+                    continue
+
                 # Skip single-character or very generic terms
                 if len(topic) < 3:
                     continue
@@ -203,6 +209,11 @@ def discover_from_related_queries():
                     value = row.get("value", 0)
 
                     if not query or query in existing or query in already_pending:
+                        continue
+
+                    junk, reason = is_junk(query)
+                    if junk:
+                        logger.debug(f"Filtered junk keyword: '{query}' ({reason})")
                         continue
 
                     conn.execute("""
