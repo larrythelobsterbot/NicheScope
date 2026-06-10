@@ -44,7 +44,9 @@ def temp_db(tmp_path, monkeypatch):
         if name == "config":
             continue
         module_file = getattr(module, "__file__", None) or ""
-        if module_file.startswith(collectors_dir):
+        # Only reload NicheScope's own modules — not third-party packages
+        # installed in a venv that happens to live under collectors/.
+        if module_file.startswith(collectors_dir) and "site-packages" not in module_file:
             importlib.reload(module)
 
     return str(db_path)

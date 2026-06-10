@@ -107,6 +107,20 @@ ALERT_THRESHOLDS = {
     "trend_spike_pct": 30,
     "price_drop_pct": 15,
     "new_competitor_traffic": 50000,
+    # Minimum current interest for a velocity spike to count as a breakout;
+    # below this, percent changes are noise (interest 2 -> 3 is "+50%").
+    "min_interest": 10,
+    # Suppress duplicate alerts for the same subject within this window.
+    "alert_dedup_days": 7,
+    # Auto-acknowledge unread alerts older than this.
+    "alert_expiry_days": 30,
+}
+
+# Keepa product bootstrap: top keywords per category get their best-selling
+# ASINs auto-discovered via product_finder and inserted into `products`.
+KEEPA_BOOTSTRAP = {
+    "keywords_per_category": 3,
+    "asins_per_keyword": 5,
 }
 
 # Dynamic color palette for categories.
@@ -178,6 +192,7 @@ def get_all_category_colors() -> dict:
 SCHEDULE = {
     "google_trends": {"hour": 6, "minute": 0},
     "keepa": {"hours": 6},
+    "keepa_bootstrap": {"day_of_week": "mon", "hour": 1},
     "tiktok": {"hour": 8, "minute": 0},
     "youtube": {"hour": 8, "minute": 0},
     "alibaba": {"day_of_week": "mon", "hour": 2},

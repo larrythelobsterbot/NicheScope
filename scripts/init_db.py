@@ -195,6 +195,7 @@ def init_db():
         "ALTER TABLE suppliers ADD COLUMN price_low REAL",
         "ALTER TABLE suppliers ADD COLUMN price_high REAL",
         "ALTER TABLE categories ADD COLUMN repeat_score REAL",
+        "ALTER TABLE collector_health ADD COLUMN consecutive_zero_runs INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:

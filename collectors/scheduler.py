@@ -4,6 +4,7 @@ Production-ready: loads .env, logs everything, tracks collector health,
 alerts on repeated failures via Telegram. Never crashes.
 """
 
+import json
 import logging
 import os
 import signal
@@ -47,12 +48,12 @@ from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 
 from config import DB_PATH, SCHEDULE, get_active_keywords
 from google_trends import collect_trends
-from keepa_collector import collect_products, detect_anomalies
+from keepa_collector import collect_products, detect_anomalies, bootstrap_products
 from tiktok_trends import collect_tiktok_trends
 from youtube_trends import collect_youtube_trends
 from alibaba_collector import collect_alibaba_suppliers
 from similarweb import collect_competitor_traffic
-from analyzer import run_analysis, detect_breakouts
+from analyzer import run_analysis, detect_breakouts, generate_alerts
 from discovery import run_discovery
 from reddit_discovery import discover_from_reddit
 from etsy_discovery import discover_from_etsy
@@ -120,6 +121,7 @@ def run_collector_job(name: str, fn):
         success, items, error = True, 0, None
 
     _write_health(name, success=success, items=items, error=error)
+    _check_stall(name)
     return (success, items, error)
 
 
@@ -165,10 +167,86 @@ def _write_health(name: str, success: bool, items: int, error):
                        updated_at = excluded.updated_at""",
                 (name, now, err, items, status, now),
             )
+
+        # Stall tracking: count successful runs that wrote zero rows with no
+        # skip reason. A collector that "succeeds" with 0 items for many runs
+        # is silently broken (e.g. Keepa with an unseeded products table).
+        try:
+            if success and items > 0:
+                db.execute(
+                    "UPDATE collector_health SET consecutive_zero_runs = 0 WHERE collector_name = ?",
+                    (name,),
+                )
+            elif success and items == 0 and error is None:
+                db.execute(
+                    "UPDATE collector_health SET consecutive_zero_runs = consecutive_zero_runs + 1 "
+                    "WHERE collector_name = ?",
+                    (name,),
+                )
+        except sqlite3.OperationalError:
+            logger.warning("collector_health.consecutive_zero_runs missing — run scripts/migrate_003_stall_guard.py")
+
         db.commit()
         db.close()
     except Exception as e:
         logger.error(f"[{name}] failed to record health: {e}")
+
+
+STALL_THRESHOLD = 5  # consecutive zero-row "successes" before alerting
+
+
+def _check_stall(collector_name):
+    """Alert when a collector keeps reporting success but writes nothing."""
+    try:
+        db = get_health_db()
+        try:
+            row = db.execute(
+                "SELECT consecutive_zero_runs FROM collector_health WHERE collector_name = ?",
+                (collector_name,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            db.close()
+            return
+
+        if not row or (row["consecutive_zero_runs"] or 0) < STALL_THRESHOLD:
+            db.close()
+            return
+
+        zero_runs = row["consecutive_zero_runs"]
+
+        # Dedup: one stall alert per collector per 7 days
+        existing = db.execute(
+            """SELECT 1 FROM alerts
+               WHERE type = 'collector_stalled'
+                 AND json_extract(data, '$.collector') = ?
+                 AND sent_at >= datetime('now', '-7 days')
+               LIMIT 1""",
+            (collector_name,),
+        ).fetchone()
+        if existing:
+            db.close()
+            return
+
+        message = (
+            f"Collector '{collector_name}' reported success but wrote 0 rows "
+            f"for {zero_runs} consecutive runs — likely silently broken."
+        )
+        db.execute(
+            "INSERT INTO alerts (type, severity, message, data) VALUES (?, ?, ?, ?)",
+            (
+                "collector_stalled",
+                "warning",
+                message,
+                json.dumps({"collector": collector_name, "zero_runs": zero_runs}),
+            ),
+        )
+        db.commit()
+        db.close()
+
+        logger.warning(message)
+        send_telegram(f"<b>Collector Stalled</b>\n\n{message}")
+    except Exception as e:
+        logger.error(f"Stall check failed for {collector_name}: {e}")
 
 
 def check_and_alert_failures(collector_name):
@@ -222,16 +300,41 @@ def job_google_trends():
     return (success, count, err)
 
 
+def job_keepa_bootstrap():
+    logger.info("=== Keepa product bootstrap started ===")
+    if not os.getenv("KEEPA_API_KEY"):
+        logger.warning("KEEPA_API_KEY not set; skipping bootstrap.")
+        return (True, 0, "KEEPA_API_KEY not set")
+    return run_collector_job("keepa_bootstrap", bootstrap_products)
+
+
 def job_keepa():
     logger.info("=== Keepa collection started ===")
     if not os.getenv("KEEPA_API_KEY"):
         logger.warning("KEEPA_API_KEY not set; skipping this run.")
         return (True, 0, "KEEPA_API_KEY not set")
+
+    # Self-heal: if no ASINs are tracked yet, bootstrap from the keyword
+    # watchlist instead of "succeeding" with zero rows forever.
+    try:
+        db = get_health_db()
+        product_count = db.execute(
+            "SELECT COUNT(*) AS cnt FROM products WHERE is_active = 1"
+        ).fetchone()["cnt"]
+        db.close()
+        if product_count == 0:
+            logger.warning("products table is empty — running bootstrap before collection.")
+            job_keepa_bootstrap()
+    except Exception as e:
+        logger.error(f"Pre-Keepa product check failed: {e}")
+
     success, count, err = run_collector_job("keepa", collect_products)
     if success and count > 0:
         try:
             anomalies = detect_anomalies()
-            for anomaly in anomalies:
+            # Store with dedup; only telegram anomalies not already alerted
+            new = generate_alerts([], anomalies)
+            for anomaly in new["new_price_alerts"]:
                 send_price_alert(anomaly)
         except Exception as e:
             logger.error(f"Post-Keepa analysis failed: {e}")
@@ -283,7 +386,7 @@ def job_weekly_analysis():
     def _wrapped():
         results = run_analysis()
         for b in results.get("breakouts", []):
-            if b["severity"] == "critical":
+            if b["severity"] == "critical" and b.get("is_new"):
                 send_breakout_alert(b)
         return (True, len(results.get("breakouts", [])), None)
     return run_collector_job("weekly_analysis", _wrapped)
@@ -360,7 +463,9 @@ def run_post_collection():
     try:
         results = run_analysis()
         for b in results.get("breakouts", []):
-            if b["severity"] == "critical":
+            # is_new is set by generate_alerts; without it a persistent riser
+            # would re-telegram after every collector run.
+            if b["severity"] == "critical" and b.get("is_new"):
                 send_breakout_alert(b)
     except Exception as e:
         logger.error(f"Post-collection analysis failed: {e}")
@@ -418,6 +523,21 @@ def build_scheduler() -> BlockingScheduler:
         id="keepa",
         name="Keepa Product Collector",
         misfire_grace_time=1800,
+        coalesce=True,
+    )
+
+    # Keepa bootstrap: weekly on Mondays at 1am HKT (refreshes tracked ASINs
+    # to follow the keyword watchlist)
+    scheduler.add_job(
+        job_keepa_bootstrap,
+        CronTrigger(
+            day_of_week=SCHEDULE["keepa_bootstrap"]["day_of_week"],
+            hour=SCHEDULE["keepa_bootstrap"]["hour"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="keepa_bootstrap",
+        name="Keepa Product Bootstrap",
+        misfire_grace_time=7200,
         coalesce=True,
     )
 

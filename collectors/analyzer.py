@@ -63,8 +63,12 @@ def detect_breakouts() -> list:
         cursor.execute("SELECT id, keyword, category FROM keywords WHERE is_active = 1")
         keywords = cursor.fetchall()
 
+    min_interest = ALERT_THRESHOLDS["min_interest"]
+
     for kw in keywords:
         velocity = calculate_trend_velocity(kw["id"])
+        if velocity["current"] < min_interest:
+            continue  # percent moves on near-zero interest are noise
         if velocity["velocity_4w"] > threshold:
             breakouts.append({
                 "keyword": kw["keyword"],
@@ -359,12 +363,40 @@ def _calc_repeat_purchase_score(cursor, category: str) -> float:
     return defaults.get(category, 50)
 
 
-def generate_alerts(breakouts: list, price_anomalies: list = None):
-    """Store alerts in the database for dashboard display."""
+def _is_duplicate_alert(cursor, alert_type: str, subject_field: str, subject: str) -> bool:
+    """True if an alert of this type for this subject exists within the dedup window."""
+    dedup_days = ALERT_THRESHOLDS["alert_dedup_days"]
+    cursor.execute(
+        f"""SELECT 1 FROM alerts
+            WHERE type = ?
+              AND json_extract(data, '$.{subject_field}') = ?
+              AND sent_at >= datetime('now', '-{int(dedup_days)} days')
+            LIMIT 1""",
+        (alert_type, subject),
+    )
+    return cursor.fetchone() is not None
+
+
+def generate_alerts(breakouts: list, price_anomalies: list = None) -> dict:
+    """Store alerts in the database for dashboard display.
+
+    Deduplicates: the same keyword/ASIN does not re-alert within the dedup
+    window even though analysis runs several times a day. Each breakout dict
+    is tagged with "is_new"; callers should only notify on new ones.
+
+    Returns {"new_breakouts": [...], "new_price_alerts": [...]}.
+    """
+    new_breakouts = []
+    new_price_alerts = []
+
     with get_db() as db:
         cursor = db.cursor()
 
         for b in breakouts:
+            if _is_duplicate_alert(cursor, "breakout", "keyword", b["keyword"]):
+                b["is_new"] = False
+                continue
+            b["is_new"] = True
             cursor.execute(
                 """INSERT INTO alerts (type, severity, message, data)
                    VALUES (?, ?, ?, ?)""",
@@ -375,10 +407,13 @@ def generate_alerts(breakouts: list, price_anomalies: list = None):
                     json.dumps(b),
                 ),
             )
+            new_breakouts.append(b)
 
         if price_anomalies:
             for a in price_anomalies:
                 alert_type = a.get("type", "price_drop")
+                if _is_duplicate_alert(cursor, alert_type, "asin", a.get("asin", "")):
+                    continue
                 if alert_type == "price_drop":
                     cursor.execute(
                         """INSERT INTO alerts (type, severity, message, data)
@@ -390,6 +425,7 @@ def generate_alerts(breakouts: list, price_anomalies: list = None):
                             json.dumps(a),
                         ),
                     )
+                    new_price_alerts.append(a)
                 elif alert_type == "stock_out":
                     cursor.execute(
                         """INSERT INTO alerts (type, severity, message, data)
@@ -401,8 +437,27 @@ def generate_alerts(breakouts: list, price_anomalies: list = None):
                             json.dumps(a),
                         ),
                     )
+                    new_price_alerts.append(a)
 
         db.commit()
+
+    return {"new_breakouts": new_breakouts, "new_price_alerts": new_price_alerts}
+
+
+def expire_old_alerts() -> int:
+    """Auto-acknowledge unread alerts older than the expiry window."""
+    expiry_days = ALERT_THRESHOLDS["alert_expiry_days"]
+    with get_db() as db:
+        cursor = db.execute(
+            f"""UPDATE alerts SET acknowledged = 1
+                WHERE acknowledged = 0
+                  AND sent_at < datetime('now', '-{int(expiry_days)} days')"""
+        )
+        db.commit()
+        expired = cursor.rowcount
+    if expired:
+        logger.info(f"Auto-acknowledged {expired} alerts older than {expiry_days} days")
+    return expired
 
 
 def run_analysis():
@@ -415,8 +470,11 @@ def run_analysis():
     # 2. Calculate niche scores
     scores = calculate_niche_scores()
 
-    # 3. Generate alerts
+    # 3. Generate alerts (deduplicated; tags each breakout with "is_new")
     generate_alerts(breakouts)
+
+    # 4. Expire stale alerts
+    expire_old_alerts()
 
     logger.info("Analysis pipeline complete.")
     return {"breakouts": breakouts, "scores": scores}

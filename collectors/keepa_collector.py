@@ -7,7 +7,7 @@ from datetime import datetime
 
 import keepa
 
-from config import DB_PATH, KEEPA_API_KEY, get_tracked_asins
+from config import DB_PATH, KEEPA_API_KEY, KEEPA_BOOTSTRAP, get_tracked_asins
 from rate_limiter import KEEPA_API, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
@@ -149,14 +149,16 @@ def collect_products():
         return (False, 0, str(e))
 
 
-def discover_new_products(category: str, search_term: str, max_results: int = 20):
-    """Use Keepa to discover new products entering a category."""
+def discover_new_products(category: str, search_term: str, max_results: int = 20, api=None):
+    """Use Keepa to discover new products entering a category. Returns ASIN list."""
     if not KEEPA_API_KEY:
         return []
 
-    api = keepa.Keepa(KEEPA_API_KEY)
+    if api is None:
+        api = keepa.Keepa(KEEPA_API_KEY)
 
     try:
+        KEEPA_API.wait_if_needed()
         product_search = api.product_finder(
             {
                 "title": search_term,
@@ -164,10 +166,88 @@ def discover_new_products(category: str, search_term: str, max_results: int = 20
                 "perPage": max_results,
             }
         )
+        KEEPA_API.record_request()
         return product_search if product_search else []
     except Exception as e:
         logger.error(f"Product discovery failed for '{search_term}': {e}")
         return []
+
+
+def bootstrap_products():
+    """Seed/refresh the `products` table from the keyword watchlist.
+
+    For the top N keywords per category (by latest Google Trends interest),
+    find the best-selling ASINs via Keepa product_finder and insert them.
+    This breaks the chicken-and-egg where collect_products() only reads
+    ASINs from `products` but nothing ever wrote to it.
+
+    Returns (success: bool, asins_inserted: int, error: str | None).
+    Never raises to the scheduler.
+    """
+    if not KEEPA_API_KEY:
+        logger.warning("KEEPA_API_KEY not set, skipping bootstrap.")
+        return (True, 0, "KEEPA_API_KEY not set")
+
+    kw_per_cat = KEEPA_BOOTSTRAP["keywords_per_category"]
+    asins_per_kw = KEEPA_BOOTSTRAP["asins_per_keyword"]
+
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        # Top keywords per category by most recent interest score
+        cursor.execute(
+            """SELECT id, keyword, category FROM (
+                   SELECT k.id, k.keyword, k.category,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY k.category
+                              ORDER BY td.interest_score DESC
+                          ) AS rn
+                   FROM keywords k
+                   JOIN trend_data td ON td.keyword_id = k.id
+                   WHERE k.is_active = 1
+                     AND td.date = (
+                         SELECT MAX(date) FROM trend_data WHERE keyword_id = k.id
+                     )
+               ) WHERE rn <= ?""",
+            (kw_per_cat,),
+        )
+        targets = cursor.fetchall()
+
+        if not targets:
+            db.close()
+            logger.warning("No keywords with trend data found; nothing to bootstrap.")
+            return (True, 0, None)
+
+        api = keepa.Keepa(KEEPA_API_KEY)
+        inserted = 0
+
+        for kw in targets:
+            asins = discover_new_products(
+                kw["category"], kw["keyword"], max_results=asins_per_kw, api=api
+            )
+            for asin in asins[:asins_per_kw]:
+                cursor.execute(
+                    """INSERT INTO products (asin, category, keyword_id)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(asin) DO NOTHING""",
+                    (asin, kw["category"], kw["id"]),
+                )
+                inserted += cursor.rowcount
+            db.commit()
+            logger.info(
+                f"Bootstrap '{kw['keyword']}' ({kw['category']}): {len(asins)} ASINs found"
+            )
+
+        db.close()
+        logger.info(f"Keepa bootstrap complete. {inserted} new products tracked.")
+        return (True, inserted, None)
+    except RateLimitExceeded as e:
+        logger.warning(f"Stopping Keepa bootstrap: {e}")
+        return (True, 0, str(e))
+    except Exception as e:
+        logger.error(f"Keepa bootstrap top-level error: {e}", exc_info=True)
+        return (False, 0, str(e))
 
 
 def detect_anomalies():
@@ -249,5 +329,8 @@ if __name__ == "__main__":
             print("Test passed.")
         else:
             print("KEEPA_API_KEY not set. Set it and retry.")
+    elif "--bootstrap" in sys.argv:
+        success, inserted, err = bootstrap_products()
+        print(f"Bootstrap: success={success} inserted={inserted} error={err}")
     else:
         collect_products()
