@@ -16,7 +16,7 @@ from pytrends.request import TrendReq
 import sqlite3
 import time
 import logging
-from config import DB_PATH, get_active_keywords
+from config import DB_PATH, DISCOVERY, get_active_keywords
 from keyword_filter import is_junk
 from rate_limiter import GOOGLE_TRENDS, RateLimitExceeded
 from discovery_feedback import get_source_weights, should_skip_source, get_productive_parents
@@ -157,10 +157,55 @@ def discover_from_google_categories():
     return discovered
 
 
+def _select_discovery_parents(conn, keywords: dict, productive_keywords: set) -> list:
+    """Pick which tracked keywords to expand via related queries.
+
+    Returns a list of (category, keyword) capped per category and
+    interleaved across categories. Without the cap, the dominant category
+    consumed the whole Google Trends budget and discovery only ever found
+    more of itself; without interleaving, a rate-limit stop mid-run
+    starved every category after the first.
+
+    Priority within a category: feedback-productive parents first, then
+    fastest-rising keywords (from keyword_metrics), so rising parents get
+    expanded before stale ones.
+    """
+    cap = DISCOVERY["parents_per_category"]
+
+    velocity = {}
+    try:
+        velocity = dict(conn.execute(
+            """SELECT k.keyword, km.velocity_4w
+               FROM keyword_metrics km JOIN keywords k ON k.id = km.keyword_id"""
+        ).fetchall())
+    except sqlite3.OperationalError:
+        pass  # metrics table not migrated yet — fall back to feedback-only order
+
+    per_category = []
+    for category, kw_list in keywords.items():
+        ranked = sorted(
+            kw_list,
+            key=lambda k: (
+                k.lower() in productive_keywords,
+                velocity.get(k, 0) or 0,
+            ),
+            reverse=True,
+        )
+        per_category.append([(category, k) for k in ranked[:cap]])
+
+    # Interleave: one parent from each category in turn
+    interleaved = []
+    for i in range(cap):
+        for cat_parents in per_category:
+            if i < len(cat_parents):
+                interleaved.append(cat_parents[i])
+    return interleaved
+
+
 def discover_from_related_queries():
     """
-    For each tracked keyword, check its rising related queries.
-    Surface any that we are not already tracking.
+    For a balanced sample of tracked keywords, check rising related
+    queries. Surface any that we are not already tracking.
     """
     if should_skip_source("google_related"):
         logger.info("Google related queries deprioritized by feedback loop. Skipping.")
@@ -181,72 +226,75 @@ def discover_from_related_queries():
         conn.execute("SELECT keyword FROM pending_keywords WHERE status = 'pending'").fetchall()
     )
 
+    parents = _select_discovery_parents(conn, keywords, productive_keywords)
+    logger.info(
+        f"Expanding {len(parents)} parents across {len(keywords)} categories "
+        f"(cap {DISCOVERY['parents_per_category']}/category)"
+    )
+
     pytrends = TrendReq(hl='en-US', tz=480)
     discovered = 0
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 3
 
-    for category, kw_list in keywords.items():
-        # Sort: productive keywords first
-        sorted_kws = sorted(kw_list, key=lambda k: k.lower() in productive_keywords, reverse=True)
-        for keyword in sorted_kws:
-            try:
-                GOOGLE_TRENDS.wait_if_needed()
-                pytrends.build_payload([keyword], timeframe="today 3-m")
-                related = pytrends.related_queries()
-                GOOGLE_TRENDS.record_request()
-                consecutive_errors = 0  # Reset on success
+    for category, keyword in parents:
+        try:
+            GOOGLE_TRENDS.wait_if_needed()
+            pytrends.build_payload([keyword], timeframe="today 3-m")
+            related = pytrends.related_queries()
+            GOOGLE_TRENDS.record_request()
+            consecutive_errors = 0  # Reset on success
 
-                if not related or keyword not in related:
+            if not related or keyword not in related:
+                continue
+
+            rising = related[keyword].get("rising")
+            if rising is None or rising.empty:
+                continue
+
+            for _, row in rising.iterrows():
+                query = row.get("query", "").strip().lower()
+                value = row.get("value", 0)
+
+                if not query or query in existing or query in already_pending:
                     continue
 
-                rising = related[keyword].get("rising")
-                if rising is None or rising.empty:
+                junk, reason = is_junk(query)
+                if junk:
+                    logger.debug(f"Filtered junk keyword: '{query}' ({reason})")
                     continue
 
-                for _, row in rising.iterrows():
-                    query = row.get("query", "").strip().lower()
-                    value = row.get("value", 0)
+                conn.execute("""
+                    INSERT OR IGNORE INTO pending_keywords
+                    (keyword, suggested_category, source, parent_keyword, relevance_score)
+                    VALUES (?, ?, 'google_related', ?, ?)
+                """, (query, category, keyword, min(value / 1000, 1.0)))
 
-                    if not query or query in existing or query in already_pending:
-                        continue
+                discovered += 1
+                already_pending.add(query)
 
-                    junk, reason = is_junk(query)
-                    if junk:
-                        logger.debug(f"Filtered junk keyword: '{query}' ({reason})")
-                        continue
-
-                    conn.execute("""
-                        INSERT OR IGNORE INTO pending_keywords
-                        (keyword, suggested_category, source, parent_keyword, relevance_score)
-                        VALUES (?, ?, 'google_related', ?, ?)
-                    """, (query, category, keyword, min(value / 1000, 1.0)))
-
-                    discovered += 1
-                    already_pending.add(query)
-
-            except RateLimitExceeded:
-                logger.warning("Rate limit hit. Stopping discovery.")
-                conn.commit()
-                conn.close()
-                return discovered
-            except Exception as e:
-                error_msg = str(e)
-                consecutive_errors += 1
-                if "429" in error_msg or "index out of range" in error_msg:
-                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                        logger.error(
-                            f"Google blocking requests ({consecutive_errors} consecutive failures). "
-                            f"Stopping related query discovery."
-                        )
-                        conn.commit()
-                        conn.close()
-                        return discovered
-                    logger.warning(f"Google 429/error for '{keyword}' ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Backing off...")
-                    time.sleep(60 * (2 ** consecutive_errors))
-                else:
-                    logger.error(f"Error on related queries for {keyword}: {e}")
-                    time.sleep(5)
+        except RateLimitExceeded:
+            logger.warning("Rate limit hit. Stopping discovery.")
+            conn.commit()
+            conn.close()
+            return discovered
+        except Exception as e:
+            error_msg = str(e)
+            consecutive_errors += 1
+            if "429" in error_msg or "index out of range" in error_msg:
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    logger.error(
+                        f"Google blocking requests ({consecutive_errors} consecutive failures). "
+                        f"Stopping related query discovery."
+                    )
+                    conn.commit()
+                    conn.close()
+                    return discovered
+                logger.warning(f"Google 429/error for '{keyword}' ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Backing off...")
+                time.sleep(60 * (2 ** consecutive_errors))
+            else:
+                logger.error(f"Error on related queries for {keyword}: {e}")
+                time.sleep(5)
 
     conn.commit()
     conn.close()

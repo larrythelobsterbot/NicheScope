@@ -321,41 +321,36 @@ def calculate_niche_scores():
 
 
 def _calc_trend_score(cursor, category: str) -> float:
-    """Average trend velocity across all keywords in category (0-100 scale)."""
-    cursor.execute("""
-        SELECT k.id, td.interest_score, td.date,
-               ROW_NUMBER() OVER (PARTITION BY k.id ORDER BY td.date DESC) as rn
-        FROM keywords k
-        JOIN trend_data td ON k.id = td.keyword_id
-        WHERE k.category = ? AND k.is_active = 1
-          AND td.interest_score IS NOT NULL
-          AND td.date >= date('now', '-91 days')
-        ORDER BY k.id, td.date DESC
-    """, (category,))
-    rows = cursor.fetchall()
+    """Median trend velocity across category keywords (0-100 scale).
 
-    # Group by keyword_id
-    keyword_data = {}
-    for row in rows:
-        kid = row["id"]
-        rn = row["rn"]
-        if kid not in keyword_data:
-            keyword_data[kid] = {}
-        keyword_data[kid][rn] = row["interest_score"]
+    Median, not mean: in a category with thousands of keywords a handful
+    of extreme risers (or the long tail of zeros) should not set the
+    category's score. Reads keyword_metrics, which run_analysis refreshes
+    before calling this.
+    """
+    try:
+        cursor.execute(
+            """SELECT km.velocity_4w
+               FROM keyword_metrics km
+               JOIN keywords k ON k.id = km.keyword_id
+               WHERE k.category = ? AND k.is_active = 1
+                 AND km.velocity_4w IS NOT NULL""",
+            (category,),
+        )
+        velocities = sorted(r["velocity_4w"] for r in cursor.fetchall())
+    except sqlite3.OperationalError:
+        velocities = []  # metrics table not migrated yet
 
-    if not keyword_data:
+    if not velocities:
         return 50.0
 
-    velocities = []
-    for kid, scores in keyword_data.items():
-        current = scores.get(1, 0)
-        four_weeks = scores.get(4, scores.get(max(scores.keys()), 1))
-        four_weeks = max(four_weeks or 1, 1)
-        velocity = ((current / four_weeks) * 100) - 100
-        velocities.append(velocity)
+    mid = len(velocities) // 2
+    if len(velocities) % 2:
+        median_velocity = velocities[mid]
+    else:
+        median_velocity = (velocities[mid - 1] + velocities[mid]) / 2
 
-    avg_velocity = sum(velocities) / len(velocities)
-    return max(0, min(100, 50 + (avg_velocity / 2)))
+    return max(0, min(100, 50 + (median_velocity / 2)))
 
 
 def _calc_margin_score(cursor, category: str) -> float:

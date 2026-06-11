@@ -58,6 +58,7 @@ from discovery import run_discovery
 from reddit_discovery import discover_from_reddit
 from etsy_discovery import discover_from_etsy
 from amazon_bestsellers import collect_amazon_bestsellers
+from pending_triage import triage_pending
 from telegram_bot import (
     send_daily_digest,
     send_discovery_digest,
@@ -458,6 +459,11 @@ def job_amazon_bestsellers():
     return (success, count, err)
 
 
+def job_pending_triage():
+    logger.info("=== Pending keyword triage started ===")
+    return run_collector_job("pending_triage", triage_pending)
+
+
 def run_post_collection():
     """Run analysis after a collector finishes."""
     try:
@@ -638,6 +644,16 @@ def build_scheduler() -> BlockingScheduler:
         CronTrigger(hour=5, minute=0, timezone="Asia/Hong_Kong"),
         id="amazon_bestsellers",
         name="Amazon Best Sellers Discovery",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+    # Pending keyword triage: daily at 5:30am HKT (after the discovery jobs)
+    scheduler.add_job(
+        job_pending_triage,
+        CronTrigger(hour=5, minute=30, timezone="Asia/Hong_Kong"),
+        id="pending_triage",
+        name="Pending Keyword Triage",
         misfire_grace_time=3600,
         coalesce=True,
     )

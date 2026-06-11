@@ -123,6 +123,25 @@ KEEPA_BOOTSTRAP = {
     "asins_per_keyword": 5,
 }
 
+# Discovery rebalancing: related-query expansion samples at most this many
+# parent keywords per category per run. Without a cap the dominant category
+# (beauty, 67% of keywords) consumes the whole Google Trends budget and
+# discovers only more of itself.
+DISCOVERY = {
+    "parents_per_category": 25,
+}
+
+# Pending-keyword auto-triage thresholds
+TRIAGE = {
+    "auto_reject_relevance": 0.3,   # below this -> auto-reject
+    "auto_approve_relevance": 0.6,  # at/above this (and not junk) -> auto-approve
+    "stale_days": 30,               # pending longer than this -> auto-reject
+    "max_auto_approvals_per_category": 10,  # per run
+    # Categories already holding more than this share of active keywords get
+    # no auto-approvals (manual review only) so imbalance stops compounding.
+    "max_category_share": 0.4,
+}
+
 # Dynamic color palette for categories.
 CATEGORY_PALETTE = [
     "#FF6B8A",  # pink (beauty default)

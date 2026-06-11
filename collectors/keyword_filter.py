@@ -118,6 +118,36 @@ _BEAUTY_INDICATOR_WORDS: frozenset[str] = frozenset([
     "skincare", "bodycare", "haircare",
 ])
 
+# Product indicator words for non-beauty categories. A non-Latin-script
+# keyword containing any of these (e.g. a mixed-script query like
+# "ohora ネイル strips") is a product search, not junk. Without this list
+# the non-Latin rule structurally blocked every non-English keyword
+# outside beauty. Kept conservative: generic product nouns only.
+_PRODUCT_INDICATOR_WORDS: frozenset[str] = frozenset([
+    # jewelry
+    "ring", "rings", "necklace", "bracelet", "earrings", "earring",
+    "pendant", "charm", "anklet", "piercing", "jewelry", "jewellery",
+    # home / kitchen
+    "organizer", "organiser", "shelf", "lamp", "rug", "curtain", "pillow",
+    "blanket", "mattress", "decor", "vase", "candle", "humidifier",
+    # fitness / wellness
+    "yoga", "pilates", "dumbbell", "resistance", "protein", "supplement",
+    "massager", "fitness", "workout",
+    # baby / kids
+    "stroller", "crib", "diaper", "pacifier", "teether", "montessori",
+    # pets
+    "leash", "collar", "aquarium", "terrarium", "litter",
+    # travel / bags
+    "luggage", "suitcase", "backpack", "tote", "pouch", "wallet",
+    # tech accessories
+    "charger", "case", "stand", "holder", "tripod", "earbuds", "headphones",
+    # generic commerce
+    "kit", "set", "strips", "sticker", "stickers", "wrap", "wraps",
+    "organic", "portable", "wireless", "mini", "refill",
+])
+
+_ALL_PRODUCT_INDICATORS: frozenset[str] = _BEAUTY_INDICATOR_WORDS | _PRODUCT_INDICATOR_WORDS
+
 
 def _has_non_latin_script(text: str) -> bool:
     """
@@ -145,12 +175,12 @@ def _has_non_latin_script(text: str) -> bool:
     return False
 
 
-def _contains_beauty_indicator(text_lower: str) -> bool:
-    """Return True if any beauty indicator word appears as a word token."""
+def _contains_product_indicator(text_lower: str) -> bool:
+    """Return True if any product indicator word appears as a word token."""
     # Split on spaces and common punctuation so "vitamina" matches in
     # "vitamina c para o rosto".
     tokens = re.split(r'[\s\-/&\(\)]+', text_lower)
-    return bool(frozenset(tokens) & _BEAUTY_INDICATOR_WORDS)
+    return bool(frozenset(tokens) & _ALL_PRODUCT_INDICATORS)
 
 
 # ---------------------------------------------------------------------------
@@ -246,10 +276,10 @@ def is_junk(keyword: str) -> tuple[bool, str]:
             logger.debug("is_junk blocked %r — %s", keyword, reason)
             return True, reason
 
-    # --- Rule 4: Non-Latin-script non-beauty ---
+    # --- Rule 4: Non-Latin-script with no product indicator ---
     if _has_non_latin_script(kw_lower):
-        if not _contains_beauty_indicator(kw_lower):
-            reason = "non-ASCII characters with no beauty indicator word"
+        if not _contains_product_indicator(kw_lower):
+            reason = "non-ASCII characters with no product indicator word"
             logger.debug("is_junk blocked %r — %s", keyword, reason)
             return True, reason
 
