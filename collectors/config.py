@@ -9,6 +9,11 @@ KEEPA_API_KEY = os.getenv("KEEPA_API_KEY", "")
 AMAZON_ACCESS_KEY = os.getenv("AMAZON_ACCESS_KEY", "")
 AMAZON_SECRET_KEY = os.getenv("AMAZON_SECRET_KEY", "")
 AMAZON_PARTNER_TAG = os.getenv("AMAZON_PARTNER_TAG", "")
+# Amazon Creators API (PA-API's successor) — OAuth2-style credentials from
+# Associates Central -> Tools -> Creators API -> Add new credential
+AMAZON_CREATORS_CREDENTIAL_ID = os.getenv("AMAZON_CREATORS_CREDENTIAL_ID", "")
+AMAZON_CREATORS_CREDENTIAL_SECRET = os.getenv("AMAZON_CREATORS_CREDENTIAL_SECRET", "")
+AMAZON_CREATORS_VERSION = os.getenv("AMAZON_CREATORS_VERSION", "v3.1")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 ALIBABA_APP_KEY = os.getenv("ALIBABA_APP_KEY", "")

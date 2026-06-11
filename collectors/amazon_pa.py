@@ -1,4 +1,11 @@
-"""Amazon Product Advertising API collector."""
+"""Amazon product data collector — Creators API (preferred) or legacy PA-API.
+
+Amazon replaced the Product Advertising API with the Creators API in 2025.
+New Associates accounts get OAuth2-style credentials (credential id +
+secret + version) instead of the old AWS-style access/secret keys. This
+collector supports both: Creators API when its credentials are configured,
+legacy PA-API otherwise.
+"""
 
 import sqlite3
 import json
@@ -10,19 +17,42 @@ from config import (
     AMAZON_ACCESS_KEY,
     AMAZON_SECRET_KEY,
     AMAZON_PARTNER_TAG,
+    AMAZON_CREATORS_CREDENTIAL_ID,
+    AMAZON_CREATORS_CREDENTIAL_SECRET,
+    AMAZON_CREATORS_VERSION,
     get_active_keywords,
 )
 from rate_limiter import AMAZON_PA, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
 
-# Lazy import: paapi5 may not be installed
+# Lazy imports: the package may not be installed
+try:
+    from amazon_creatorsapi import AmazonCreatorsApi
+    HAS_CREATORS = True
+except ImportError:
+    HAS_CREATORS = False
+
 try:
     from amazon_paapi import AmazonApi
     HAS_PAAPI = True
 except ImportError:
     HAS_PAAPI = False
-    logger.warning("amazon-paapi not installed. Amazon PA-API collector disabled.")
+
+if not HAS_CREATORS and not HAS_PAAPI:
+    logger.warning("python-amazon-paapi not installed. Amazon collector disabled.")
+
+
+def _has_creators_creds() -> bool:
+    return all([
+        AMAZON_CREATORS_CREDENTIAL_ID,
+        AMAZON_CREATORS_CREDENTIAL_SECRET,
+        AMAZON_PARTNER_TAG,
+    ])
+
+
+def _has_legacy_creds() -> bool:
+    return all([AMAZON_ACCESS_KEY, AMAZON_SECRET_KEY, AMAZON_PARTNER_TAG])
 
 
 def get_db():
@@ -32,24 +62,96 @@ def get_db():
 
 
 def get_amazon_api():
-    """Initialize the Amazon PA-API client."""
-    if not HAS_PAAPI:
-        return None
-    if not all([AMAZON_ACCESS_KEY, AMAZON_SECRET_KEY, AMAZON_PARTNER_TAG]):
-        logger.warning("Amazon PA-API credentials not configured.")
-        return None
+    """Initialize the Amazon API client.
 
-    return AmazonApi(
-        AMAZON_ACCESS_KEY,
-        AMAZON_SECRET_KEY,
-        AMAZON_PARTNER_TAG,
-        country="US",
-    )
+    Returns (client, flavor) where flavor is "creators" or "paapi",
+    or (None, None) if not configured/installed.
+    """
+    if HAS_CREATORS and _has_creators_creds():
+        return (
+            AmazonCreatorsApi(
+                AMAZON_CREATORS_CREDENTIAL_ID,
+                AMAZON_CREATORS_CREDENTIAL_SECRET,
+                AMAZON_CREATORS_VERSION,
+                AMAZON_PARTNER_TAG,
+            ),
+            "creators",
+        )
+
+    if HAS_PAAPI and _has_legacy_creds():
+        return (
+            AmazonApi(
+                AMAZON_ACCESS_KEY,
+                AMAZON_SECRET_KEY,
+                AMAZON_PARTNER_TAG,
+                country="US",
+            ),
+            "paapi",
+        )
+
+    logger.warning("Amazon API credentials not configured.")
+    return (None, None)
+
+
+def _item_to_product(item, flavor: str) -> dict:
+    """Normalize an API item (either flavor) into our product dict."""
+    product = {
+        "asin": item.asin,
+        "title": item.item_info.title.display_value if item.item_info and item.item_info.title else "",
+        "brand": "",
+        "price": None,
+        "image_url": "",
+        "sales_rank": None,
+    }
+
+    if item.item_info and item.item_info.by_line_info and item.item_info.by_line_info.brand:
+        product["brand"] = item.item_info.by_line_info.brand.display_value
+
+    if flavor == "creators":
+        # Creators API: item.offers_v2.listings[0].price.money.amount
+        offers = getattr(item, "offers_v2", None)
+        if offers and offers.listings:
+            price = offers.listings[0].price
+            if price and price.money and price.money.amount is not None:
+                product["price"] = float(price.money.amount)
+    else:
+        # Legacy PA-API: item.offers.listings[0].price.amount
+        offers = getattr(item, "offers", None)
+        if offers and offers.listings and offers.listings[0].price:
+            product["price"] = offers.listings[0].price.amount
+
+    if item.images and item.images.primary and item.images.primary.large:
+        product["image_url"] = item.images.primary.large.url
+
+    return product
+
+
+# Resource selections per API flavor (Creators API uses camelCase paths
+# typed as a SearchItemsResource enum)
+if HAS_CREATORS:
+    from amazon_creatorsapi.models import SearchItemsResource
+
+    _CREATORS_RESOURCES = [
+        SearchItemsResource("itemInfo.title"),
+        SearchItemsResource("itemInfo.byLineInfo"),
+        SearchItemsResource("offersV2.listings.price"),
+        SearchItemsResource("images.primary.large"),
+    ]
+else:
+    _CREATORS_RESOURCES = []
+_PAAPI_RESOURCES = [
+    "ItemInfo.Title",
+    "ItemInfo.ByLineInfo",
+    "Offers.Listings.Price",
+    "Offers.Listings.DeliveryInfo.IsFreeShippingEligible",
+    "Images.Primary.Large",
+    "BrowseNodeInfo.BrowseNodes.SalesRank",
+]
 
 
 def search_products(keyword: str, category: str, max_results: int = 10):
     """Search Amazon for products matching a keyword."""
-    api = get_amazon_api()
+    api, flavor = get_amazon_api()
     if not api:
         return []
 
@@ -59,42 +161,11 @@ def search_products(keyword: str, category: str, max_results: int = 10):
             keywords=keyword,
             search_index="All",
             item_count=min(max_results, 10),
-            resources=[
-                "ItemInfo.Title",
-                "ItemInfo.ByLineInfo",
-                "Offers.Listings.Price",
-                "Offers.Listings.DeliveryInfo.IsFreeShippingEligible",
-                "Images.Primary.Large",
-                "BrowseNodeInfo.BrowseNodes.SalesRank",
-            ],
+            resources=_CREATORS_RESOURCES if flavor == "creators" else _PAAPI_RESOURCES,
         )
         AMAZON_PA.record_request()
 
-        products = []
-        for item in results.items or []:
-            product = {
-                "asin": item.asin,
-                "title": item.item_info.title.display_value if item.item_info and item.item_info.title else "",
-                "brand": "",
-                "price": None,
-                "image_url": "",
-                "sales_rank": None,
-            }
-
-            if item.item_info and item.item_info.by_line_info and item.item_info.by_line_info.brand:
-                product["brand"] = item.item_info.by_line_info.brand.display_value
-
-            if item.offers and item.offers.listings:
-                listing = item.offers.listings[0]
-                if listing.price:
-                    product["price"] = listing.price.amount
-
-            if item.images and item.images.primary and item.images.primary.large:
-                product["image_url"] = item.images.primary.large.url
-
-            products.append(product)
-
-        return products
+        return [_item_to_product(item, flavor) for item in results.items or []]
 
     except RateLimitExceeded:
         raise  # caller stops the run; don't swallow as a search failure
@@ -109,13 +180,13 @@ def collect_amazon_products():
     Returns (success: bool, price_snapshots_written: int, error: str | None).
     Never raises to the scheduler.
     """
-    if not HAS_PAAPI:
-        return (True, 0, "amazon-paapi package not installed")
-    if not all([AMAZON_ACCESS_KEY, AMAZON_SECRET_KEY, AMAZON_PARTNER_TAG]):
+    if not HAS_CREATORS and not HAS_PAAPI:
+        return (True, 0, "python-amazon-paapi package not installed")
+    if not (_has_creators_creds() or _has_legacy_creds()):
         # Skip reason (not None) so the stall guard doesn't fire while
         # credentials are simply not configured yet.
-        logger.warning("Amazon PA-API credentials not configured; skipping.")
-        return (True, 0, "PA-API credentials not configured")
+        logger.warning("Amazon API credentials not configured; skipping.")
+        return (True, 0, "Amazon API credentials not configured")
 
     db = get_db()
     cursor = db.cursor()
@@ -195,7 +266,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     if "--test" in sys.argv:
-        logger.info("Running Amazon PA-API test...")
+        _, flavor = get_amazon_api()
+        logger.info(f"Running Amazon API test (flavor: {flavor or 'not configured'})...")
         results = search_products("nail stickers", "beauty", max_results=3)
         for r in results:
             print(f"  {r['asin']}: {r['title'][:60]} - ${r['price']}")
