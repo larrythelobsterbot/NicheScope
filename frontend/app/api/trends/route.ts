@@ -129,7 +129,7 @@ export async function GET(request: NextRequest) {
     trends.sort((a, b) => b.velocity_4w - a.velocity_4w);
 
     // Also get niche scores
-    const scores = await queryAll<{
+    const scoreRows = await queryAll<{
       category: string;
       overall_score: number;
       trend_score: number;
@@ -138,11 +138,25 @@ export async function GET(request: NextRequest) {
       sourcing_score: number;
       content_score: number;
       repeat_purchase_score: number;
+      provenance: string | null;
     }>(
       `SELECT * FROM niche_scores
        WHERE date = (SELECT MAX(date) FROM niche_scores)
        ORDER BY overall_score DESC`
     );
+
+    const scores = scoreRows.map((s) => ({
+      ...s,
+      // {"trend": "real" | "fallback", ...} — which components come from
+      // collected data vs hardcoded category defaults
+      provenance: (() => {
+        try {
+          return s.provenance ? JSON.parse(s.provenance) : null;
+        } catch {
+          return null;
+        }
+      })(),
+    }));
 
     return NextResponse.json({ trends, scores });
   } catch (error) {

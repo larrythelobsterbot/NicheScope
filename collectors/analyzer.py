@@ -258,23 +258,14 @@ def calculate_niche_scores():
         cursor = db.cursor()
 
         for category in get_categories():
-            # Trend score: average velocity across category keywords
-            trend_score = _calc_trend_score(cursor, category)
-
-            # Margin score: based on price data and supplier costs
-            margin_score = _calc_margin_score(cursor, category)
-
-            # Competition score: fewer competitors with high traffic = better opportunity
-            competition_score = _calc_competition_score(cursor, category)
-
-            # Sourcing score: based on supplier quality and availability
-            sourcing_score = _calc_sourcing_score(cursor, category)
-
-            # Content score: based on TikTok engagement potential
-            content_score = _calc_content_score(cursor, category)
-
-            # Repeat purchase score: based on product category nature
-            repeat_score = _calc_repeat_purchase_score(cursor, category)
+            # Each component returns (score, provenance) where provenance is
+            # "real" (from collected data) or "fallback" (category default).
+            trend_score, trend_src = _calc_trend_score(cursor, category)
+            margin_score, margin_src = _calc_margin_score(cursor, category)
+            competition_score, competition_src = _calc_competition_score(cursor, category)
+            sourcing_score, sourcing_src = _calc_sourcing_score(cursor, category)
+            content_score, content_src = _calc_content_score(cursor, category)
+            repeat_score, repeat_src = _calc_repeat_purchase_score(cursor, category)
 
             # Weighted overall score
             overall = (
@@ -286,6 +277,15 @@ def calculate_niche_scores():
                 + repeat_score * SCORE_WEIGHTS["repeat_purchase"]
             )
 
+            provenance = {
+                "trend": trend_src,
+                "margin": margin_src,
+                "competition": competition_src,
+                "sourcing": sourcing_src,
+                "content": content_src,
+                "repeat_purchase": repeat_src,
+            }
+
             scores[category] = {
                 "trend_score": round(trend_score, 1),
                 "margin_score": round(margin_score, 1),
@@ -294,25 +294,47 @@ def calculate_niche_scores():
                 "content_score": round(content_score, 1),
                 "repeat_purchase_score": round(repeat_score, 1),
                 "overall_score": round(overall, 1),
+                "provenance": provenance,
             }
 
             # Store snapshot
-            cursor.execute(
-                """INSERT OR REPLACE INTO niche_scores
-                   (category, date, trend_score, margin_score, competition_score,
-                    sourcing_score, content_score, repeat_purchase_score, overall_score)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    category, today,
-                    scores[category]["trend_score"],
-                    scores[category]["margin_score"],
-                    scores[category]["competition_score"],
-                    scores[category]["sourcing_score"],
-                    scores[category]["content_score"],
-                    scores[category]["repeat_purchase_score"],
-                    scores[category]["overall_score"],
-                ),
-            )
+            try:
+                cursor.execute(
+                    """INSERT OR REPLACE INTO niche_scores
+                       (category, date, trend_score, margin_score, competition_score,
+                        sourcing_score, content_score, repeat_purchase_score,
+                        overall_score, provenance)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        category, today,
+                        scores[category]["trend_score"],
+                        scores[category]["margin_score"],
+                        scores[category]["competition_score"],
+                        scores[category]["sourcing_score"],
+                        scores[category]["content_score"],
+                        scores[category]["repeat_purchase_score"],
+                        scores[category]["overall_score"],
+                        json.dumps(provenance),
+                    ),
+                )
+            except sqlite3.OperationalError:
+                # provenance column missing — run scripts/migrate_005_score_provenance.py
+                cursor.execute(
+                    """INSERT OR REPLACE INTO niche_scores
+                       (category, date, trend_score, margin_score, competition_score,
+                        sourcing_score, content_score, repeat_purchase_score, overall_score)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        category, today,
+                        scores[category]["trend_score"],
+                        scores[category]["margin_score"],
+                        scores[category]["competition_score"],
+                        scores[category]["sourcing_score"],
+                        scores[category]["content_score"],
+                        scores[category]["repeat_purchase_score"],
+                        scores[category]["overall_score"],
+                    ),
+                )
 
         db.commit()
 
@@ -320,7 +342,7 @@ def calculate_niche_scores():
     return scores
 
 
-def _calc_trend_score(cursor, category: str) -> float:
+def _calc_trend_score(cursor, category: str) -> tuple:
     """Median trend velocity across category keywords (0-100 scale).
 
     Median, not mean: in a category with thousands of keywords a handful
@@ -342,7 +364,7 @@ def _calc_trend_score(cursor, category: str) -> float:
         velocities = []  # metrics table not migrated yet
 
     if not velocities:
-        return 50.0
+        return 50.0, "fallback"
 
     mid = len(velocities) // 2
     if len(velocities) % 2:
@@ -350,10 +372,10 @@ def _calc_trend_score(cursor, category: str) -> float:
     else:
         median_velocity = (velocities[mid - 1] + velocities[mid]) / 2
 
-    return max(0, min(100, 50 + (median_velocity / 2)))
+    return max(0, min(100, 50 + (median_velocity / 2))), "real"
 
 
-def _calc_margin_score(cursor, category: str) -> float:
+def _calc_margin_score(cursor, category: str) -> tuple:
     """Estimate margin potential from price data vs supplier costs (0-100)."""
     # Get average retail price from product history
     cursor.execute(
@@ -376,7 +398,7 @@ def _calc_margin_score(cursor, category: str) -> float:
 
     if not avg_retail or not suppliers:
         defaults = {"beauty": 75, "jewelry": 80, "travel": 60}
-        return defaults.get(category, 50)
+        return defaults.get(category, 50), "fallback"
 
     avg_cost = 0
     count = 0
@@ -400,12 +422,12 @@ def _calc_margin_score(cursor, category: str) -> float:
         avg_cost = avg_cost / count
         margin_pct = ((avg_retail - avg_cost) / avg_retail) * 100 if avg_retail > 0 else 0
         # Normalize: 30% margin = 50, 70% = 100, <10% = 0
-        return max(0, min(100, (margin_pct - 10) * (100 / 60)))
+        return max(0, min(100, (margin_pct - 10) * (100 / 60))), "real"
 
-    return 50.0
+    return 50.0, "fallback"
 
 
-def _calc_competition_score(cursor, category: str) -> float:
+def _calc_competition_score(cursor, category: str) -> tuple:
     """Lower competition = higher score (0-100)."""
     cursor.execute(
         """SELECT COUNT(*) as cnt, AVG(ct.visits_estimate) as avg_traffic
@@ -418,14 +440,19 @@ def _calc_competition_score(cursor, category: str) -> float:
     num_competitors = row["cnt"] if row else 0
     avg_traffic = row["avg_traffic"] if row and row["avg_traffic"] else 0
 
+    if num_competitors == 0:
+        # "100 — no competition" with zero competitors tracked is absence
+        # of data, not evidence of an open market.
+        return 70.0, "fallback"
+
     # Fewer competitors with lower traffic = higher opportunity score
     comp_penalty = min(num_competitors * 10, 50)
     traffic_penalty = min(avg_traffic / 10000, 50) if avg_traffic else 0
 
-    return max(0, 100 - comp_penalty - traffic_penalty)
+    return max(0, 100 - comp_penalty - traffic_penalty), "real"
 
 
-def _calc_sourcing_score(cursor, category: str) -> float:
+def _calc_sourcing_score(cursor, category: str) -> tuple:
     """Score based on supplier quality and availability (0-100)."""
     cursor.execute(
         """SELECT AVG(quality_score) as avg_quality, COUNT(*) as cnt
@@ -436,15 +463,15 @@ def _calc_sourcing_score(cursor, category: str) -> float:
     row = cursor.fetchone()
 
     if not row or row["cnt"] == 0:
-        return 40.0
+        return 40.0, "fallback"
 
     quality = (row["avg_quality"] or 5) * 10  # Scale 1-10 to 10-100
     availability_bonus = min(row["cnt"] * 10, 30)  # More suppliers = better
 
-    return min(100, quality + availability_bonus)
+    return min(100, quality + availability_bonus), "real"
 
 
-def _calc_content_score(cursor, category: str) -> float:
+def _calc_content_score(cursor, category: str) -> tuple:
     """Score based on YouTube content volume for category keywords (0-100)."""
     # Aggregate the most recent content_trends row per keyword in this category
     cursor.execute(
@@ -461,7 +488,7 @@ def _calc_content_score(cursor, category: str) -> float:
 
     if not row or not row["n"]:
         defaults = {"beauty": 80, "jewelry": 60, "travel": 55}
-        return defaults.get(category, 50)
+        return defaults.get(category, 50), "fallback"
 
     avg_views = row["avg_views"] or 0
     velocity = row["avg_velocity"] or 0
@@ -484,10 +511,10 @@ def _calc_content_score(cursor, category: str) -> float:
     else:
         velocity_score = 30
 
-    return (view_score + velocity_score) / 2
+    return (view_score + velocity_score) / 2, "real"
 
 
-def _calc_repeat_purchase_score(cursor, category: str) -> float:
+def _calc_repeat_purchase_score(cursor, category: str) -> tuple:
     """Repeat purchase potential — DB-driven with sensible fallbacks."""
     # Check for a stored repeat_score in the categories table
     try:
@@ -497,7 +524,8 @@ def _calc_repeat_purchase_score(cursor, category: str) -> float:
         )
         row = cursor.fetchone()
         if row and row["repeat_score"] is not None:
-            return float(row["repeat_score"])
+            # User-configured value, not collected data — but deliberate.
+            return float(row["repeat_score"]), "real"
     except Exception:
         pass  # Column may not exist yet
 
@@ -512,7 +540,7 @@ def _calc_repeat_purchase_score(cursor, category: str) -> float:
         "home": 40,
         "tech_accessories": 30,
     }
-    return defaults.get(category, 50)
+    return defaults.get(category, 50), "fallback"
 
 
 def _is_duplicate_alert(cursor, alert_type: str, subject_field: str, subject: str) -> bool:

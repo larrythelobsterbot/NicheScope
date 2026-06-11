@@ -73,6 +73,8 @@ export interface Supplier {
   notes: string;
 }
 
+export type ScoreProvenance = Record<string, "real" | "fallback">;
+
 export interface NicheScore {
   category: string;
   date: string;
@@ -83,6 +85,8 @@ export interface NicheScore {
   content_score: number;
   repeat_purchase_score: number;
   overall_score: number;
+  // Per-component data provenance; null on rows from before migration 005
+  provenance?: ScoreProvenance | null;
 }
 
 export interface Alert {
