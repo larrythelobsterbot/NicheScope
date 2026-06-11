@@ -30,16 +30,21 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Get keywords with latest trend data and calculated velocity
+    // Get keywords with latest trend data and analyzer-computed velocity
     const rows = await queryAll<{
       keyword: string;
       category: string;
       current_score: number;
       prev_score: number;
+      velocity_4w: number | null;
+      velocity_yoy: number | null;
+      is_seasonal: number | null;
+      lifecycle: string | null;
     }>(
       `SELECT k.keyword, k.category,
               td_current.interest_score as current_score,
-              COALESCE(td_prev.interest_score, 1) as prev_score
+              COALESCE(td_prev.interest_score, 1) as prev_score,
+              km.velocity_4w, km.velocity_yoy, km.is_seasonal, km.lifecycle
        FROM keywords k
        LEFT JOIN (
          SELECT keyword_id, interest_score,
@@ -52,12 +57,15 @@ export async function GET(request: NextRequest) {
          FROM trend_data
          WHERE date <= date('now', '-28 days')
        ) td_prev ON k.id = td_prev.keyword_id AND td_prev.rn = 1
+       LEFT JOIN keyword_metrics km ON k.id = km.keyword_id
        WHERE k.is_active = 1
          AND td_current.interest_score IS NOT NULL`
     );
 
     const keywords = rows.map((row) => {
-      const change =
+      // Prefer the analyzer's window-averaged velocity; fall back to the
+      // single-point calculation for keywords it has not covered yet.
+      const fallback =
         row.prev_score > 0
           ? Math.round(((row.current_score / row.prev_score) * 100 - 100) * 10) / 10
           : 0;
@@ -65,7 +73,10 @@ export async function GET(request: NextRequest) {
         keyword: row.keyword,
         category: row.category,
         interest_score: row.current_score,
-        change_pct: change,
+        change_pct: row.velocity_4w ?? fallback,
+        velocity_yoy: row.velocity_yoy,
+        is_seasonal: row.is_seasonal === 1,
+        lifecycle: row.lifecycle ?? "stable",
       };
     });
 

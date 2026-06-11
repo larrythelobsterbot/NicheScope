@@ -196,6 +196,17 @@ def init_db():
         "ALTER TABLE suppliers ADD COLUMN price_high REAL",
         "ALTER TABLE categories ADD COLUMN repeat_score REAL",
         "ALTER TABLE collector_health ADD COLUMN consecutive_zero_runs INTEGER DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS keyword_metrics (
+            keyword_id INTEGER PRIMARY KEY REFERENCES keywords(id),
+            computed_at DATETIME,
+            current_interest REAL,
+            velocity_4w REAL,
+            velocity_12w REAL,
+            velocity_yoy REAL,
+            z_score REAL,
+            is_seasonal INTEGER DEFAULT 0,
+            lifecycle TEXT
+        )""",
     ]
     for sql in migrations:
         try:

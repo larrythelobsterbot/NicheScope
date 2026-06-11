@@ -22,62 +22,219 @@ def get_db():
         conn.close()
 
 
-def calculate_trend_velocity(keyword_id: int) -> dict:
-    """Calculate trend velocity comparing current week to 4 and 12 weeks ago."""
-    with get_db() as db:
-        cursor = db.cursor()
+# Trend metric tuning. Weekly data points, newest first.
+METRIC_WINDOWS = {
+    "history_weeks": 56,      # fetch horizon (covers YoY comparison)
+    "yoy_offset": 49,         # rows ~52 weeks ago: indexes [49, 56)
+    "yoy_window": 7,          # +/- a few weeks absorbs Google's weekly bucket drift
+    "yoy_min_rows": 55,       # minimum history for a YoY figure
+    "z_threshold": 2.0,       # breakout needs current > mean + 2 sigma
+    "seasonal_yoy_flat_pct": 15.0,  # YoY below this while 4w spikes => seasonal
+}
 
-        cursor.execute(
-            """SELECT date, interest_score FROM trend_data
-               WHERE keyword_id = ? AND interest_score IS NOT NULL
-               ORDER BY date DESC LIMIT 13""",
-            (keyword_id,),
-        )
-        rows = cursor.fetchall()
 
-    if len(rows) < 2:
-        return {"velocity_4w": 0.0, "velocity_12w": 0.0, "current": 0}
+def _mean(values):
+    values = [v for v in values if v is not None]
+    return (sum(values) / len(values)) if values else None
 
-    current = rows[0]["interest_score"]
-    four_weeks = rows[3]["interest_score"] if len(rows) > 3 else rows[-1]["interest_score"]
-    twelve_weeks = rows[11]["interest_score"] if len(rows) > 11 else rows[-1]["interest_score"]
 
-    four_weeks = max(four_weeks or 1, 1)
-    twelve_weeks = max(twelve_weeks or 1, 1)
+def _pct_change(current, baseline):
+    baseline = max(baseline or 1, 1)
+    return round(((current / baseline) * 100) - 100, 1)
+
+
+def _classify_lifecycle(current: float, velocity_4w: float, velocity_12w: float) -> str:
+    """Classify where a keyword sits in its trend lifecycle."""
+    if velocity_4w <= -10:
+        return "declining"
+    if velocity_4w >= 10:
+        # Rising from a low base = early; rising while already established = hot
+        return "emerging" if current < 30 else "accelerating"
+    if velocity_12w >= 25:
+        return "peaking"  # rose over the quarter, now flat at the top
+    return "stable"
+
+
+def _metrics_from_scores(scores: list) -> dict:
+    """Compute trend metrics from a keyword's interest scores, newest first.
+
+    Velocities compare window averages, not single points: one noisy week
+    against another produced most of the old false breakouts.
+    """
+    if len(scores) < 2:
+        return {
+            "velocity_4w": 0.0, "velocity_12w": 0.0, "velocity_yoy": None,
+            "current": scores[0] if scores else 0,
+            "z_score": 0.0, "is_seasonal": False, "lifecycle": "stable",
+        }
+
+    current = _mean(scores[0:2])
+    baseline_4w = _mean(scores[4:7]) or _mean(scores[-2:])
+    baseline_12w = _mean(scores[10:13]) or baseline_4w
+
+    velocity_4w = _pct_change(current, baseline_4w)
+    velocity_12w = _pct_change(current, baseline_12w)
+
+    # Z-score of the latest point against its own trailing 12 weeks
+    trailing = scores[1:13]
+    z_score = 0.0
+    if len(trailing) >= 4:
+        mean = _mean(trailing)
+        variance = sum((s - mean) ** 2 for s in trailing) / len(trailing)
+        std = max(variance ** 0.5, 1.0)  # floor: don't divide by near-zero on flat series
+        z_score = round((scores[0] - mean) / std, 2)
+
+    # Year-over-year, peak-to-peak: current level vs last year's local
+    # maximum around the same week. A mean would dilute last year's spike
+    # with its shoulder weeks and make recurring seasonal peaks look like
+    # genuine growth.
+    velocity_yoy = None
+    if len(scores) >= METRIC_WINDOWS["yoy_min_rows"]:
+        start = METRIC_WINDOWS["yoy_offset"]
+        window = [s for s in scores[start:start + METRIC_WINDOWS["yoy_window"]] if s is not None]
+        if window:
+            velocity_yoy = _pct_change(current, max(window))
+
+    # Seasonal: spiking vs a month ago but flat vs the same time last year
+    is_seasonal = (
+        velocity_yoy is not None
+        and velocity_4w > ALERT_THRESHOLDS["trend_spike_pct"]
+        and velocity_yoy < METRIC_WINDOWS["seasonal_yoy_flat_pct"]
+    )
 
     return {
-        "velocity_4w": round(((current / four_weeks) * 100) - 100, 1),
-        "velocity_12w": round(((current / twelve_weeks) * 100) - 100, 1),
-        "current": current,
+        "velocity_4w": velocity_4w,
+        "velocity_12w": velocity_12w,
+        "velocity_yoy": velocity_yoy,
+        "current": scores[0],
+        "z_score": z_score,
+        "is_seasonal": is_seasonal,
+        "lifecycle": _classify_lifecycle(scores[0], velocity_4w, velocity_12w),
     }
 
 
-def detect_breakouts() -> list:
-    """Detect keywords with week-over-week growth exceeding threshold."""
-    breakouts = []
-    threshold = ALERT_THRESHOLDS["trend_spike_pct"]
-
+def calculate_trend_velocity(keyword_id: int) -> dict:
+    """Compute trend metrics for one keyword (window-averaged velocities)."""
     with get_db() as db:
         cursor = db.cursor()
+        cursor.execute(
+            """SELECT interest_score FROM trend_data
+               WHERE keyword_id = ? AND interest_score IS NOT NULL
+               ORDER BY date DESC LIMIT ?""",
+            (keyword_id, METRIC_WINDOWS["history_weeks"]),
+        )
+        scores = [r["interest_score"] for r in cursor.fetchall()]
+    return _metrics_from_scores(scores)
+
+
+def compute_all_metrics() -> dict:
+    """Compute metrics for every active keyword in one pass and persist them.
+
+    Returns {keyword_id: {keyword, category, **metrics}}. Written to the
+    keyword_metrics table so the frontend reads the same numbers the
+    analyzer alerts on, instead of re-deriving its own.
+    """
+    with get_db() as db:
+        cursor = db.cursor()
+        cursor.execute(
+            """SELECT keyword_id, interest_score FROM (
+                   SELECT td.keyword_id, td.date, td.interest_score,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY td.keyword_id ORDER BY td.date DESC
+                          ) AS rn
+                   FROM trend_data td
+                   JOIN keywords k ON k.id = td.keyword_id
+                   WHERE k.is_active = 1 AND td.interest_score IS NOT NULL
+               ) WHERE rn <= ?
+               ORDER BY keyword_id, rn""",
+            (METRIC_WINDOWS["history_weeks"],),
+        )
+        series = {}
+        for row in cursor.fetchall():
+            series.setdefault(row["keyword_id"], []).append(row["interest_score"])
 
         cursor.execute("SELECT id, keyword, category FROM keywords WHERE is_active = 1")
-        keywords = cursor.fetchall()
+        keywords = {r["id"]: r for r in cursor.fetchall()}
 
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        metrics = {}
+        persist = True
+        for kid, kw in keywords.items():
+            m = _metrics_from_scores(series.get(kid, []))
+            m["keyword"] = kw["keyword"]
+            m["category"] = kw["category"]
+            metrics[kid] = m
+
+            if not persist:
+                continue
+            try:
+                cursor.execute(
+                    """INSERT INTO keyword_metrics
+                           (keyword_id, computed_at, current_interest, velocity_4w,
+                            velocity_12w, velocity_yoy, z_score, is_seasonal, lifecycle)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(keyword_id) DO UPDATE SET
+                           computed_at = excluded.computed_at,
+                           current_interest = excluded.current_interest,
+                           velocity_4w = excluded.velocity_4w,
+                           velocity_12w = excluded.velocity_12w,
+                           velocity_yoy = excluded.velocity_yoy,
+                           z_score = excluded.z_score,
+                           is_seasonal = excluded.is_seasonal,
+                           lifecycle = excluded.lifecycle""",
+                    (
+                        kid, now, m["current"], m["velocity_4w"], m["velocity_12w"],
+                        m["velocity_yoy"], m["z_score"], int(m["is_seasonal"]),
+                        m["lifecycle"],
+                    ),
+                )
+            except sqlite3.OperationalError:
+                persist = False
+                logger.warning(
+                    "keyword_metrics table missing — run scripts/migrate_004_keyword_metrics.py"
+                )
+
+        db.commit()
+
+    logger.info(f"Computed metrics for {len(metrics)} keywords")
+    return metrics
+
+
+def detect_breakouts(metrics: dict = None) -> list:
+    """Detect genuine breakouts: big 4-week move, statistically unusual
+    for the keyword, on meaningful interest. Seasonal spikes are kept but
+    tagged and capped at info severity."""
+    threshold = ALERT_THRESHOLDS["trend_spike_pct"]
     min_interest = ALERT_THRESHOLDS["min_interest"]
 
-    for kw in keywords:
-        velocity = calculate_trend_velocity(kw["id"])
-        if velocity["current"] < min_interest:
+    if metrics is None:
+        metrics = compute_all_metrics()
+
+    breakouts = []
+    for kid, m in metrics.items():
+        if m["current"] < min_interest:
             continue  # percent moves on near-zero interest are noise
-        if velocity["velocity_4w"] > threshold:
-            breakouts.append({
-                "keyword": kw["keyword"],
-                "category": kw["category"],
-                "velocity_4w": velocity["velocity_4w"],
-                "velocity_12w": velocity["velocity_12w"],
-                "current_interest": velocity["current"],
-                "severity": _classify_severity(velocity["velocity_4w"]),
-            })
+        if m["velocity_4w"] <= threshold:
+            continue
+        if m["z_score"] < METRIC_WINDOWS["z_threshold"]:
+            continue  # within the keyword's normal variance — just a wobble
+
+        severity = _classify_severity(m["velocity_4w"])
+        if m["is_seasonal"]:
+            severity = "info"  # expected annual pattern, never page on it
+
+        breakouts.append({
+            "keyword": m["keyword"],
+            "category": m["category"],
+            "velocity_4w": m["velocity_4w"],
+            "velocity_12w": m["velocity_12w"],
+            "velocity_yoy": m["velocity_yoy"],
+            "z_score": m["z_score"],
+            "is_seasonal": m["is_seasonal"],
+            "lifecycle": m["lifecycle"],
+            "current_interest": m["current"],
+            "severity": severity,
+        })
 
     breakouts.sort(key=lambda x: x["velocity_4w"], reverse=True)
     logger.info(f"Detected {len(breakouts)} breakout signals")
@@ -397,13 +554,14 @@ def generate_alerts(breakouts: list, price_anomalies: list = None) -> dict:
                 b["is_new"] = False
                 continue
             b["is_new"] = True
+            seasonal_tag = " (seasonal)" if b.get("is_seasonal") else ""
             cursor.execute(
                 """INSERT INTO alerts (type, severity, message, data)
                    VALUES (?, ?, ?, ?)""",
                 (
                     "breakout",
                     b["severity"],
-                    f"'{b['keyword']}' trending +{b['velocity_4w']}% in {b['category']}",
+                    f"'{b['keyword']}' trending +{b['velocity_4w']}% in {b['category']}{seasonal_tag}",
                     json.dumps(b),
                 ),
             )
@@ -464,8 +622,10 @@ def run_analysis():
     """Run the full analysis pipeline."""
     logger.info("Starting analysis pipeline...")
 
-    # 1. Detect breakouts
-    breakouts = detect_breakouts()
+    # 1. Compute per-keyword metrics (persisted for the dashboard), then
+    #    detect breakouts from them
+    metrics = compute_all_metrics()
+    breakouts = detect_breakouts(metrics)
 
     # 2. Calculate niche scores
     scores = calculate_niche_scores()

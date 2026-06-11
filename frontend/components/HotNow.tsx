@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { KeywordTrend } from "@/lib/types";
 import { formatPercent } from "@/lib/utils";
 import Sparkline from "./Sparkline";
+import LifecycleBadge from "./LifecycleBadge";
 
 interface HotNowProps {
   trends: KeywordTrend[];
@@ -72,6 +73,7 @@ function HotRow({
               {trend.subcategory.replace(/_/g, " ")}
             </span>
           )}
+          <LifecycleBadge lifecycle={trend.lifecycle} isSeasonal={trend.is_seasonal} />
         </div>
         <div className="flex items-center gap-3 mt-0.5">
           <span

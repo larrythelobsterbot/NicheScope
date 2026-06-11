@@ -2,12 +2,15 @@
 
 import { formatPercent } from "@/lib/utils";
 import Sparkline from "./Sparkline";
+import LifecycleBadge from "./LifecycleBadge";
 
 interface RisingKeyword {
   keyword: string;
   category: string;
   interest_score: number;
   change_pct: number;
+  is_seasonal?: boolean;
+  lifecycle?: string;
   history?: number[];
 }
 
@@ -55,7 +58,8 @@ export default function RisingKeywords({
 
             {/* Keyword name */}
             <span className="text-sm text-slate-400 font-medium flex-1 min-w-0 break-words leading-tight">
-              {kw.keyword}
+              {kw.keyword}{" "}
+              <LifecycleBadge lifecycle={kw.lifecycle} isSeasonal={kw.is_seasonal} />
             </span>
 
             {/* Mini sparkline */}

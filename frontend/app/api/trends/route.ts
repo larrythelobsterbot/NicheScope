@@ -80,20 +80,48 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Calculate velocities
+    // Analyzer-computed metrics (window-averaged velocities, YoY,
+    // seasonality, lifecycle) — the same numbers alerts are based on.
+    const metricRows = await queryAll<{
+      keyword: string;
+      velocity_4w: number;
+      velocity_12w: number;
+      velocity_yoy: number | null;
+      is_seasonal: number;
+      lifecycle: string | null;
+    }>(
+      `SELECT k.keyword, km.velocity_4w, km.velocity_12w, km.velocity_yoy,
+              km.is_seasonal, km.lifecycle
+       FROM keyword_metrics km
+       JOIN keywords k ON k.id = km.keyword_id
+       WHERE k.is_active = 1`
+    ).catch(() => [] as never[]); // table may not exist before migration 004
+    const metricMap = new Map(metricRows.map((m) => [m.keyword, m]));
+
     const trends = Array.from(keywordMap.values()).map((entry) => {
       const sorted = entry.history.sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
       );
       const current = sorted[0]?.interest_score || 0;
+      const metrics = metricMap.get(entry.keyword);
+
+      // Fallback to the old single-point math only when the analyzer
+      // has not computed metrics for this keyword yet.
       const fourWeeks = sorted[3]?.interest_score || sorted[sorted.length - 1]?.interest_score || 1;
       const twelveWeeks = sorted[11]?.interest_score || sorted[sorted.length - 1]?.interest_score || 1;
 
       return {
         ...entry,
         current_interest: current,
-        velocity_4w: Math.round(((current / Math.max(fourWeeks, 1)) * 100 - 100) * 10) / 10,
-        velocity_12w: Math.round(((current / Math.max(twelveWeeks, 1)) * 100 - 100) * 10) / 10,
+        velocity_4w:
+          metrics?.velocity_4w ??
+          Math.round(((current / Math.max(fourWeeks, 1)) * 100 - 100) * 10) / 10,
+        velocity_12w:
+          metrics?.velocity_12w ??
+          Math.round(((current / Math.max(twelveWeeks, 1)) * 100 - 100) * 10) / 10,
+        velocity_yoy: metrics?.velocity_yoy ?? null,
+        is_seasonal: metrics ? metrics.is_seasonal === 1 : false,
+        lifecycle: metrics?.lifecycle ?? "stable",
       };
     });
 

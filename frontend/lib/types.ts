@@ -16,6 +16,13 @@ export interface TrendDataPoint {
   region_data: Record<string, number> | null;
 }
 
+export type Lifecycle =
+  | "emerging"
+  | "accelerating"
+  | "peaking"
+  | "declining"
+  | "stable";
+
 export interface KeywordTrend {
   keyword: string;
   category: string;
@@ -23,6 +30,9 @@ export interface KeywordTrend {
   current_interest: number;
   velocity_4w: number;
   velocity_12w: number;
+  velocity_yoy: number | null;
+  is_seasonal: boolean;
+  lifecycle: Lifecycle;
   history: TrendDataPoint[];
   related_rising: string[];
   region_data: Record<string, number>;
