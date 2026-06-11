@@ -65,6 +65,17 @@ _NEWS_PATTERNS: list[re.Pattern] = [
     # "shooting star", "trouble shooting", "photo shooting"
     re.compile(r'\b(mass|police|active|deadly|school|church|nightclub) shooting\b', re.I),
     re.compile(r'\bshooting (?:in|near|at|suspect|victim|death|kills)\b', re.I),
+    # Generic news queries — almost never a product. Catches "<x> news",
+    # "news <x>", "breaking/latest/international news", "<x> news today".
+    # A product keyword essentially never ends in "news", so this is safe.
+    re.compile(r'\bnews\b\s*(today|update|latest)?\s*$', re.I),
+    re.compile(r'^\s*(breaking|latest|international|today\b.*)\s+news\b', re.I),
+    re.compile(r'\bnews\s+(today|update|on|of|about)\b', re.I),
+    # AI / tech-company / market news feeds that slipped into commerce cats
+    re.compile(r'\b(openai|anthropic|nvidia|github|shopify|stripe|gumroad|'
+               r'crypto|bitcoin|ethereum|stock market|federal reserve|'
+               r'mortgage rates?|gold price|oil price)\b.*\bnews\b', re.I),
+    re.compile(r'\b(ai|artificial intelligence|crypto|tech|semiconductor)\s+news\b', re.I),
 ]
 
 # ---------------------------------------------------------------------------
