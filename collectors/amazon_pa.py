@@ -12,6 +12,7 @@ from config import (
     AMAZON_PARTNER_TAG,
     get_active_keywords,
 )
+from rate_limiter import AMAZON_PA, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ def search_products(keyword: str, category: str, max_results: int = 10):
         return []
 
     try:
+        AMAZON_PA.wait_if_needed()
         results = api.search_items(
             keywords=keyword,
             search_index="All",
@@ -66,6 +68,7 @@ def search_products(keyword: str, category: str, max_results: int = 10):
                 "BrowseNodeInfo.BrowseNodes.SalesRank",
             ],
         )
+        AMAZON_PA.record_request()
 
         products = []
         for item in results.items or []:
@@ -93,13 +96,27 @@ def search_products(keyword: str, category: str, max_results: int = 10):
 
         return products
 
+    except RateLimitExceeded:
+        raise  # caller stops the run; don't swallow as a search failure
     except Exception as e:
         logger.error(f"Amazon search failed for '{keyword}': {e}")
         return []
 
 
 def collect_amazon_products():
-    """Collect product data from Amazon for all watchlist keywords."""
+    """Collect product data from Amazon for all watchlist keywords.
+
+    Returns (success: bool, price_snapshots_written: int, error: str | None).
+    Never raises to the scheduler.
+    """
+    if not HAS_PAAPI:
+        return (True, 0, "amazon-paapi package not installed")
+    if not all([AMAZON_ACCESS_KEY, AMAZON_SECRET_KEY, AMAZON_PARTNER_TAG]):
+        # Skip reason (not None) so the stall guard doesn't fire while
+        # credentials are simply not configured yet.
+        logger.warning("Amazon PA-API credentials not configured; skipping.")
+        return (True, 0, "PA-API credentials not configured")
+
     db = get_db()
     cursor = db.cursor()
     total_collected = 0
@@ -108,7 +125,13 @@ def collect_amazon_products():
     for category, keywords in watchlist.items():
         for keyword in keywords[:3]:  # Limit to top 3 per category to conserve API calls
             logger.info(f"Searching Amazon for: {keyword} ({category})")
-            products = search_products(keyword, category)
+            try:
+                products = search_products(keyword, category)
+            except RateLimitExceeded as e:
+                logger.warning(f"Stopping PA-API collection: {e}")
+                db.commit()
+                db.close()
+                return (True, total_collected, str(e))
 
             for prod in products:
                 if not prod["asin"]:
@@ -163,7 +186,7 @@ def collect_amazon_products():
 
     db.close()
     logger.info(f"Amazon PA-API collection complete. {total_collected} products collected.")
-    return total_collected
+    return (True, total_collected, None)
 
 
 if __name__ == "__main__":

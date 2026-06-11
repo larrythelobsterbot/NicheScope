@@ -59,6 +59,7 @@ from reddit_discovery import discover_from_reddit
 from etsy_discovery import discover_from_etsy
 from amazon_bestsellers import collect_amazon_bestsellers
 from pending_triage import triage_pending
+from amazon_pa import collect_amazon_products
 from telegram_bot import (
     send_daily_digest,
     send_discovery_digest,
@@ -459,6 +460,14 @@ def job_amazon_bestsellers():
     return (success, count, err)
 
 
+def job_amazon_pa():
+    logger.info("=== Amazon PA-API collection started ===")
+    success, count, err = run_collector_job("amazon_pa", collect_amazon_products)
+    if success and count > 0:
+        run_post_collection()
+    return (success, count, err)
+
+
 def job_pending_triage():
     logger.info("=== Pending keyword triage started ===")
     return run_collector_job("pending_triage", triage_pending)
@@ -644,6 +653,21 @@ def build_scheduler() -> BlockingScheduler:
         CronTrigger(hour=5, minute=0, timezone="Asia/Hong_Kong"),
         id="amazon_bestsellers",
         name="Amazon Best Sellers Discovery",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+    # Amazon PA-API products: daily at 7am HKT (no-ops with a skip reason
+    # until AMAZON_ACCESS_KEY / AMAZON_SECRET_KEY / AMAZON_PARTNER_TAG are set)
+    scheduler.add_job(
+        job_amazon_pa,
+        CronTrigger(
+            hour=SCHEDULE["amazon_pa"]["hour"],
+            minute=SCHEDULE["amazon_pa"]["minute"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="amazon_pa",
+        name="Amazon PA-API Product Collector",
         misfire_grace_time=3600,
         coalesce=True,
     )

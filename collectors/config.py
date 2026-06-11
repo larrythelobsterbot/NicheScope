@@ -212,6 +212,7 @@ SCHEDULE = {
     "google_trends": {"hour": 6, "minute": 0},
     "keepa": {"hours": 6},
     "keepa_bootstrap": {"day_of_week": "mon", "hour": 1},
+    "amazon_pa": {"hour": 7, "minute": 0},
     "tiktok": {"hour": 8, "minute": 0},
     "youtube": {"hour": 8, "minute": 0},
     "alibaba": {"day_of_week": "mon", "hour": 2},
