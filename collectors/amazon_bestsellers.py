@@ -124,7 +124,7 @@ def fetch_bestsellers_page(url_path: str) -> List[dict]:
                   Supports both "gp/bestsellers/beauty" and
                   "x/zgbs/beauty/11060451" formats.
 
-    Returns a list of {title, rank, asin?} dicts.
+    Returns a list of {title, rank, asin?, price?} dicts.
     """
     url = f"https://www.amazon.com/{url_path}/"
     headers = {
@@ -170,7 +170,16 @@ def fetch_bestsellers_page(url_path: str) -> List[dict]:
                         "title": title,
                         "rank": rank,
                         "asin": asin,
+                        "price": _extract_price(item),
                     })
+
+            # Fallback for the page variant where prices exist in the raw
+            # HTML but not the parsed item DOM
+            if products and not any(p["price"] for p in products):
+                price_map = _price_map_from_html(response.text)
+                for p in products:
+                    if p["asin"]:
+                        p["price"] = price_map.get(p["asin"])
 
             return products
 
@@ -183,6 +192,102 @@ def fetch_bestsellers_page(url_path: str) -> List[dict]:
     except Exception as e:
         logger.error(f"Amazon scrape failed for {url_path}: {e}")
         return []
+
+
+def _parse_price_text(text: str) -> float | None:
+    """'$13.98' / '$10.99 - $19.99' / '$1,299.00' -> float (low end)."""
+    m = re.search(r"\$\s*([\d,]+(?:\.\d{1,2})?)", text)
+    if not m:
+        return None
+    try:
+        price = float(m.group(1).replace(",", ""))
+        return price if 0 < price < 100000 else None
+    except ValueError:
+        return None
+
+
+def _price_map_from_html(html: str) -> dict:
+    """Fallback ASIN->price map regexed from raw page HTML.
+
+    Amazon A/B-serves the best-seller grid: one variant carries price spans
+    inside the item DOM, another omits them from the parsed DOM entirely.
+    Pair each product link with the next price span before another product
+    link appears.
+    """
+    prices = {}
+    for m in re.finditer(
+        r'/dp/([A-Z0-9]{10})(?:(?!/dp/[A-Z0-9]{10}).){0,4000}?'
+        r'p13n-sc-price[^>]*>\s*(\$[\d,.]+)',
+        html,
+        re.S,
+    ):
+        asin, price_text = m.group(1), m.group(2)
+        price = _parse_price_text(price_text)
+        if price and asin not in prices:
+            prices[asin] = price
+    return prices
+
+
+def _extract_price(item) -> float | None:
+    """Pull the displayed price out of one best-seller item, if present.
+
+    Amazon renders prices in spans whose class contains "p13n-sc-price"
+    (e.g. "_cDEzb_p13n-sc-price_3mJ9Z"). Text is "$13.98" or a range
+    "$10.99 - $19.99" — for ranges we take the low end.
+    """
+    span = item.find("span", class_=re.compile(r"p13n-sc-price"))
+    if not span:
+        return None
+    return _parse_price_text(span.get_text())
+
+
+def store_bestseller_products(conn, products: List[dict], category: str) -> int:
+    """Write scraped products with ASIN + price into products/product_history.
+
+    This is the free margin-data path: best-seller pages we already fetch
+    carry retail prices, and the daily run builds its own price history.
+    Returns the number of price snapshots written.
+    """
+    written = 0
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    for product in products:
+        if not product.get("asin") or not product.get("price"):
+            continue
+
+        conn.execute(
+            """INSERT INTO products (asin, title, category)
+               VALUES (?, ?, ?)
+               ON CONFLICT(asin) DO UPDATE SET title = excluded.title""",
+            (product["asin"], product["title"], category),
+        )
+        row = conn.execute(
+            "SELECT id FROM products WHERE asin = ?", (product["asin"],)
+        ).fetchone()
+
+        # One snapshot per product per day (the job runs daily, but be
+        # idempotent against re-runs)
+        dup = conn.execute(
+            """SELECT 1 FROM product_history
+               WHERE product_id = ? AND date(date) = ? LIMIT 1""",
+            (row["id"], today),
+        ).fetchone()
+        if dup:
+            continue
+
+        conn.execute(
+            """INSERT INTO product_history
+               (product_id, date, price, sales_rank, collected_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                row["id"],
+                datetime.utcnow().isoformat(),
+                product["price"],
+                product.get("rank"),
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        written += 1
+    return written
 
 
 def extract_keyword_from_title(title: str) -> str:
@@ -227,10 +332,13 @@ def extract_keyword_from_title(title: str) -> str:
     return " ".join(meaningful[:6])
 
 
-def collect_amazon_bestsellers() -> int:
+def collect_amazon_bestsellers():
     """
-    Scrape Amazon best sellers across all configured categories and add
-    new product keywords to pending_keywords.
+    Scrape Amazon best sellers across all configured categories. Adds new
+    product keywords to pending_keywords AND stores price snapshots for
+    items with an ASIN + visible price (free margin data, no API needed).
+
+    Returns (success, keywords_discovered + price_snapshots, error).
     """
     # Read existing keywords once
     conn = _open_conn()
@@ -245,13 +353,14 @@ def collect_amazon_bestsellers() -> int:
     conn.close()
 
     discovered = 0
+    prices_stored = 0
 
     for label, url_path, our_category in AMAZON_BESTSELLER_NODES:
         try:
             AMAZON_BS.wait_if_needed()
         except RateLimitExceeded:
             logger.warning("Amazon best sellers rate limit reached. Stopping.")
-            return discovered
+            return (True, discovered + prices_stored, "rate limit reached")
 
         logger.info(f"Scraping Amazon best sellers: {label} → {our_category}")
         products = fetch_bestsellers_page(url_path)
@@ -266,6 +375,9 @@ def collect_amazon_bestsellers() -> int:
         cat_conn = _open_conn()
         cat_added = 0
         try:
+            cat_prices = store_bestseller_products(cat_conn, products, our_category)
+            prices_stored += cat_prices
+
             for product in products:
                 keyword = extract_keyword_from_title(product["title"])
                 if not keyword or len(keyword) < 4:
@@ -291,11 +403,14 @@ def collect_amazon_bestsellers() -> int:
         finally:
             cat_conn.close()
 
-        logger.info(f"  → {cat_added} new keywords from {label}")
+        logger.info(f"  → {cat_added} new keywords, {cat_prices} price snapshots from {label}")
         time.sleep(5)  # Be respectful
 
-    logger.info(f"Amazon best sellers complete. {discovered} new keywords found.")
-    return discovered
+    logger.info(
+        f"Amazon best sellers complete. {discovered} new keywords, "
+        f"{prices_stored} price snapshots."
+    )
+    return (True, discovered + prices_stored, None)
 
 
 if __name__ == "__main__":
