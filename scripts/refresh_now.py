@@ -92,8 +92,22 @@ def run_etsy():
 
 def run_amazon_bestsellers():
     from amazon_bestsellers import collect_amazon_bestsellers
-    count = collect_amazon_bestsellers()
-    return f"{count} new pending keywords"
+    success, count, err = collect_amazon_bestsellers()
+    return f"{count} keywords + price snapshots" + ("" if not err else f" ({err})")
+
+
+def run_amazon_pa():
+    from amazon_pa import collect_amazon_products
+    success, count, err = collect_amazon_products()
+    if err and count == 0:
+        return f"SKIPPED ({err})"
+    return f"{count} price snapshots" + ("" if success else f" (FAILED: {err})")
+
+
+def run_triage():
+    from pending_triage import triage_pending
+    success, count, err = triage_pending()
+    return f"{count} pending keywords triaged" + ("" if success else f" (FAILED: {err})")
 
 
 def run_analysis():
@@ -113,9 +127,11 @@ COLLECTORS = {
     "reddit":             ("Reddit Discovery",     run_reddit),
     "etsy":               ("Etsy Discovery",       run_etsy),
     "amazon_bestsellers": ("Amazon Best Sellers",  run_amazon_bestsellers),
+    "amazon_pa":          ("Amazon Creators API",  run_amazon_pa),
     "alibaba":            ("Alibaba Suppliers",    run_alibaba),
     "competitor_traffic": ("Competitor Traffic",   run_competitor_traffic),
     "keepa":              ("Keepa (Amazon)",       run_keepa),
+    "triage":             ("Pending Triage",       run_triage),
     "analysis":           ("Niche Analysis",       run_analysis),
 }
 
