@@ -3,6 +3,7 @@
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 
 # API Keys (load from environment variables in production)
 KEEPA_API_KEY = os.getenv("KEEPA_API_KEY", "")
@@ -85,6 +86,74 @@ def get_competitors():
     for name, domain, category in rows:
         comps.setdefault(category, []).append({"name": name, "domain": domain})
     return comps
+
+
+# Lifecycle-weighted collection: how many days between Google Trends refreshes
+# for a keyword, by its lifecycle stage (from keyword_metrics). Rising keywords
+# stay fresh; dead weight is checked rarely. A flat rotation spent the whole
+# rate-limit budget refreshing keywords nobody searches; this targets it.
+COLLECTION_CADENCE = {
+    "emerging": 1,       # daily — the keywords we most want to catch moving
+    "accelerating": 1,   # daily
+    "peaking": 7,        # weekly — at the top, watch for the turn
+    "stable": 7,         # weekly
+    "declining": 30,     # monthly — confirm it's still dead, cheaply
+}
+COLLECTION_CADENCE_DEFAULT = 1  # no metrics yet (new keyword) -> collect to seed a baseline
+
+# Priority rank for partial (rate-limited) runs: lower = collected first, so
+# when the daily budget runs out the most important keywords are already done.
+_LIFECYCLE_RANK = {
+    "emerging": 0, "accelerating": 0,
+    "peaking": 1, "stable": 1,
+    "declining": 2,
+}
+
+
+def get_keywords_due_for_collection():
+    """Active keywords due for a Google Trends refresh today, in priority order.
+
+    Returns a flat list of (keyword, category) tuples. "Due" means the keyword
+    has not been collected within its lifecycle cadence (or never has). The list
+    is ordered so a rate-limited partial run covers rising, high-interest
+    keywords before stale ones — and interleaves categories implicitly because
+    the sort key is lifecycle+interest, not category.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT k.keyword, k.category, km.lifecycle AS lifecycle,
+                      COALESCE(km.current_interest, 0) AS interest,
+                      (SELECT MAX(collected_at) FROM trend_data
+                       WHERE keyword_id = k.id) AS last_collected
+               FROM keywords k
+               LEFT JOIN keyword_metrics km ON km.keyword_id = k.id
+               WHERE k.is_active = 1"""
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # keyword_metrics missing (pre-migration) — fall back to all active
+        conn.close()
+        return [(kw, cat) for cat, kws in get_active_keywords().items() for kw in kws]
+    conn.close()
+
+    now = datetime.utcnow()
+    due = []
+    for r in rows:
+        cadence = COLLECTION_CADENCE.get(r["lifecycle"], COLLECTION_CADENCE_DEFAULT)
+        last = r["last_collected"]
+        is_due = True
+        if last:
+            try:
+                if (now - datetime.fromisoformat(last)).days < cadence:
+                    is_due = False
+            except (ValueError, TypeError):
+                is_due = True
+        if is_due:
+            due.append(r)
+
+    due.sort(key=lambda r: (_LIFECYCLE_RANK.get(r["lifecycle"], 0), -r["interest"]))
+    return [(r["keyword"], r["category"]) for r in due]
 
 
 def get_categories():
@@ -223,4 +292,13 @@ SCHEDULE = {
     "alibaba": {"day_of_week": "mon", "hour": 2},
     "daily_digest": {"hour": 9, "minute": 0},
     "weekly_analysis": {"day_of_week": "sun", "hour": 0},
+    "prune": {"day_of_week": "sun", "hour": 1},
+}
+
+# Dead-keyword pruning thresholds (used by collectors/pruner.py).
+PRUNE = {
+    "max_peak": 5,        # peak interest over the window below
+    "window_days": 84,    # ~12 weeks
+    "min_age_days": 90,   # don't judge keywords younger than this
+    "min_points": 8,      # require enough data points to trust the verdict
 }

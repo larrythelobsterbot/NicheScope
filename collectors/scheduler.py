@@ -59,6 +59,7 @@ from reddit_discovery import discover_from_reddit
 from etsy_discovery import discover_from_etsy
 from amazon_bestsellers import collect_amazon_bestsellers
 from pending_triage import triage_pending
+from pruner import prune_dead_keywords
 from amazon_pa import collect_amazon_products
 from telegram_bot import (
     send_daily_digest,
@@ -473,6 +474,11 @@ def job_pending_triage():
     return run_collector_job("pending_triage", triage_pending)
 
 
+def job_prune():
+    logger.info("=== Dead-keyword prune started ===")
+    return run_collector_job("prune", lambda: prune_dead_keywords(apply=True))
+
+
 def run_post_collection():
     """Run analysis after a collector finishes."""
     try:
@@ -669,6 +675,22 @@ def build_scheduler() -> BlockingScheduler:
         id="amazon_pa",
         name="Amazon PA-API Product Collector",
         misfire_grace_time=3600,
+        coalesce=True,
+    )
+
+    # Dead-keyword prune: weekly Sunday 1am HKT (before the Sunday-midnight
+    # weekly analysis recomputes scores). Keeps the Google Trends budget on
+    # keywords that are actually searched.
+    scheduler.add_job(
+        job_prune,
+        CronTrigger(
+            day_of_week=SCHEDULE["prune"]["day_of_week"],
+            hour=SCHEDULE["prune"]["hour"],
+            timezone="Asia/Hong_Kong",
+        ),
+        id="prune",
+        name="Dead-Keyword Prune",
+        misfire_grace_time=7200,
         coalesce=True,
     )
 

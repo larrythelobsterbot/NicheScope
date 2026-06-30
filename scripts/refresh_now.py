@@ -110,6 +110,12 @@ def run_triage():
     return f"{count} pending keywords triaged" + ("" if success else f" (FAILED: {err})")
 
 
+def run_prune():
+    from pruner import prune_dead_keywords
+    success, count, err = prune_dead_keywords(apply=True)
+    return f"{count} dead keywords deactivated" + ("" if success else f" (FAILED: {err})")
+
+
 def run_analysis():
     from analyzer import run_analysis as _run_analysis
     results = _run_analysis()
@@ -132,6 +138,7 @@ COLLECTORS = {
     "competitor_traffic": ("Competitor Traffic",   run_competitor_traffic),
     "keepa":              ("Keepa (Amazon)",       run_keepa),
     "triage":             ("Pending Triage",       run_triage),
+    "prune":              ("Dead-Keyword Prune",   run_prune),
     "analysis":           ("Niche Analysis",       run_analysis),
 }
 
