@@ -28,6 +28,7 @@ import QuickAddModal from "@/components/QuickAddModal";
 import KeywordSearch from "@/components/KeywordSearch";
 import Skeleton from "@/components/Skeleton";
 import DataFreshness from "@/components/DataFreshness";
+import OpportunityHeader from "@/components/OpportunityHeader";
 
 type TabKey = "hot" | "writeAbout" | "nicheHunter" | "sparklines" | "bubbles" | "margins" | "radar" | "suppliers" | "heatmap";
 
@@ -176,14 +177,7 @@ export default function Dashboard() {
     return true;
   });
 
-  // ─── Derived stats (from unfiltered data for global counts) ───
-  const keywordsCollected = trends.length;
-  const categoriesActive = categories.length;
-
-  const topMover = trends.length > 0
-    ? [...trends].sort((a, b) => Math.abs(b.velocity_4w) - Math.abs(a.velocity_4w))[0]
-    : null;
-
+  // Per-keyword 12-week sparkline series for child components.
   const trendMap: Record<string, number[]> = {};
   for (const trend of trends) {
     trendMap[trend.keyword] = trend.history
@@ -288,55 +282,8 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Stats Bar — muted labels, restrained colors */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7 animate-slide-up">
-        <div className="glass-card p-6">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">
-            Keywords Tracked
-          </div>
-          <div className="font-mono text-xl font-bold text-slate-200">
-            {keywordsCollected}
-          </div>
-        </div>
-        <div className="glass-card p-6">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">
-            Categories Active
-          </div>
-          <div className="font-mono text-xl font-bold text-slate-200">
-            {categoriesActive}
-          </div>
-        </div>
-        <div className="glass-card p-6">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">
-            Top Mover (4w)
-          </div>
-          {topMover ? (
-            <div className="flex items-baseline gap-2">
-              <span className="text-sm font-semibold text-slate-300 truncate max-w-[120px]">
-                {topMover.keyword}
-              </span>
-              <span
-                className="font-mono text-sm font-bold"
-                style={{ color: topMover.velocity_4w >= 0 ? "#34D399" : "#FB7185" }}
-              >
-                {topMover.velocity_4w >= 0 ? "+" : ""}{topMover.velocity_4w}%
-              </span>
-            </div>
-          ) : (
-            <div className="text-slate-600 text-sm">&mdash;</div>
-          )}
-        </div>
-        <div className="glass-card p-6">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">
-            Data Points
-          </div>
-          <div className="font-mono text-xl font-bold text-slate-200">
-            {totalDataPoints > 0
-              ? totalDataPoints.toLocaleString()
-              : trends.reduce((sum, t) => sum + t.history.length, 0).toLocaleString()}
-          </div>
-        </div>
-      </div>
+      {/* Command center: decision KPIs + opportunity of the week + lifecycle */}
+      <OpportunityHeader onSelectCategory={handleSelectCategory} />
 
       {/* Main Layout: Sidebar + Content */}
       <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_320px] gap-6">

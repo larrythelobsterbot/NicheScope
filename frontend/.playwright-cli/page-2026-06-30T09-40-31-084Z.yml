@@ -1,0 +1,37 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "NicheScope" [level=1] [ref=e6]
+      - generic [ref=e7]:
+        - paragraph [ref=e8]: E-Commerce Niche Research Dashboard
+        - generic [ref=e11]: No data collected yet
+    - link "Admin Panel" [ref=e12] [cursor=pointer]:
+      - /url: /admin
+  - tablist [ref=e14]:
+    - tab "Show all categories" [selected] [ref=e15] [cursor=pointer]: All
+  - generic [ref=e17]:
+    - img
+    - textbox "Filter keywords" [ref=e18]:
+      - /placeholder: Filter keywords\u2026  press "/" to focus
+    - generic [ref=e20]: /
+  - generic [ref=e26]:
+    - heading "Niche Rankings" [level=2] [ref=e28]
+    - generic [ref=e33]:
+      - heading "Trend OverviewInterest over time" [level=2] [ref=e35]
+      - generic [ref=e59]:
+        - tablist [ref=e60]:
+          - tab "Hot Right Now" [selected] [ref=e61] [cursor=pointer]
+          - tab "Write About" [ref=e62] [cursor=pointer]
+          - tab "Niche Hunter" [ref=e63] [cursor=pointer]
+          - tab "Sparkline Grid" [ref=e64] [cursor=pointer]
+          - tab "Bubble Map" [ref=e65] [cursor=pointer]
+          - tab "Margin Analysis" [ref=e66] [cursor=pointer]
+          - tab "Niche Radar" [ref=e67] [cursor=pointer]
+          - tab "Supplier Intel" [ref=e68] [cursor=pointer]
+          - tab "Geo Heatmap" [ref=e69] [cursor=pointer]
+        - tabpanel [ref=e70]
+    - generic [ref=e108]:
+      - heading "Rising Keywords" [level=2] [ref=e110]
+      - heading "Breakout Signals" [level=2] [ref=e149]
+  - button "Add new keyword" [ref=e187] [cursor=pointer]: +
+  - generic [ref=e188]: NicheScope v1.0 · Data refreshes every 10 minutes
