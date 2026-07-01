@@ -55,6 +55,12 @@ def _has_legacy_creds() -> bool:
     return all([AMAZON_ACCESS_KEY, AMAZON_SECRET_KEY, AMAZON_PARTNER_TAG])
 
 
+class NotEligibleError(Exception):
+    """Amazon rejected the request because the Associates account isn't yet
+    eligible for API access (new credentials take up to 48h; the account also
+    needs qualifying sales). Treated as a skip, not a failure."""
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -74,6 +80,7 @@ def get_amazon_api():
                 AMAZON_CREATORS_CREDENTIAL_SECRET,
                 AMAZON_CREATORS_VERSION,
                 AMAZON_PARTNER_TAG,
+                country="US",
             ),
             "creators",
         )
@@ -170,6 +177,9 @@ def search_products(keyword: str, category: str, max_results: int = 10):
     except RateLimitExceeded:
         raise  # caller stops the run; don't swallow as a search failure
     except Exception as e:
+        msg = str(e)
+        if "AssociateNotEligible" in msg or "eligibility requirements" in msg:
+            raise NotEligibleError(msg)
         logger.error(f"Amazon search failed for '{keyword}': {e}")
         return []
 
@@ -198,6 +208,15 @@ def collect_amazon_products():
             logger.info(f"Searching Amazon for: {keyword} ({category})")
             try:
                 products = search_products(keyword, category)
+            except NotEligibleError:
+                logger.warning(
+                    "Amazon Associates account not yet eligible for API access "
+                    "(new credentials take up to 48h; account needs qualifying "
+                    "sales). Skipping until eligible."
+                )
+                db.commit()
+                db.close()
+                return (True, total_collected, "account not eligible yet (403 AssociateNotEligible)")
             except RateLimitExceeded as e:
                 logger.warning(f"Stopping PA-API collection: {e}")
                 db.commit()
