@@ -187,17 +187,38 @@ export default function Dashboard() {
       .slice(-12);
   }
 
-  const tabs: { key: TabKey; label: string }[] = [
-    { key: "hot", label: "Hot Right Now" },
-    { key: "writeAbout", label: "Write About" },
-    { key: "nicheHunter", label: "Niche Hunter" },
-    { key: "sparklines", label: "Sparkline Grid" },
-    { key: "bubbles", label: "Bubble Map" },
-    { key: "margins", label: "Margin Analysis" },
-    { key: "radar", label: "Niche Radar" },
-    { key: "suppliers", label: "Supplier Intel" },
-    { key: "heatmap", label: "Geo Heatmap" },
+  // Tabs grouped into 3 intents so the top row shows 3 choices, not 9. The
+  // leaf `activeTab` still drives the panel; the active group is derived from it.
+  const tabGroups: { key: string; label: string; tabs: { key: TabKey; label: string }[] }[] = [
+    {
+      key: "opportunities",
+      label: "Opportunities",
+      tabs: [
+        { key: "hot", label: "Hot Now" },
+        { key: "writeAbout", label: "Write About" },
+        { key: "nicheHunter", label: "Niche Hunter" },
+      ],
+    },
+    {
+      key: "trends",
+      label: "Trends",
+      tabs: [
+        { key: "sparklines", label: "Sparklines" },
+        { key: "bubbles", label: "Bubble Map" },
+        { key: "radar", label: "Niche Radar" },
+        { key: "heatmap", label: "Geo Heatmap" },
+      ],
+    },
+    {
+      key: "sourcing",
+      label: "Sourcing",
+      tabs: [
+        { key: "margins", label: "Margins" },
+        { key: "suppliers", label: "Suppliers" },
+      ],
+    },
   ];
+  const activeGroup = tabGroups.find((g) => g.tabs.some((t) => t.key === activeTab)) ?? tabGroups[0];
 
   return (
     <main className="min-h-screen p-5 md:p-7 lg:p-10 max-w-[1600px] mx-auto">
@@ -418,15 +439,34 @@ export default function Dashboard() {
 
           {/* Tab Panel */}
           <div className="glass-card p-6">
-            <div className="flex gap-1 mb-4 border-b border-white/[0.04] pb-3 overflow-x-auto" role="tablist">
-              {tabs.map((tab) => (
+            {/* Group tabs (3) */}
+            <div className="flex gap-1 mb-3" role="tablist" aria-label="View group">
+              {tabGroups.map((group) => (
+                <button
+                  key={group.key}
+                  onClick={() => setActiveTab(group.tabs[0].key)}
+                  role="tab"
+                  aria-selected={activeGroup.key === group.key}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    activeGroup.key === group.key
+                      ? "bg-emerald-500/15 text-emerald-300"
+                      : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]"
+                  }`}
+                >
+                  {group.label}
+                </button>
+              ))}
+            </div>
+            {/* Sub-tabs for the active group */}
+            <div className="flex gap-1 mb-4 border-b border-white/[0.04] pb-3 overflow-x-auto" role="tablist" aria-label={activeGroup.label}>
+              {activeGroup.tabs.map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
                   role="tab"
                   aria-selected={activeTab === tab.key}
                   tabIndex={0}
-                  className={`px-4 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap shrink-0 ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap shrink-0 ${
                     activeTab === tab.key
                       ? "bg-white/[0.08] text-slate-200"
                       : "text-slate-500 hover:text-slate-400 hover:bg-white/[0.02]"

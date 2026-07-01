@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { KeywordTrend } from "@/lib/types";
 import { formatPercent } from "@/lib/utils";
 import Sparkline from "./Sparkline";
-import LifecycleBadge from "./LifecycleBadge";
+import LifecycleBadge, { lifecycleAccent } from "./LifecycleBadge";
 
 interface HotNowProps {
   trends: KeywordTrend[];
@@ -40,7 +40,8 @@ function HotRow({
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/[0.03] transition-all cursor-pointer group"
+      className="flex items-center gap-3 pl-3 pr-4 py-3 rounded-xl hover:bg-white/[0.03] transition-all cursor-pointer group border-l-2"
+      style={{ borderLeftColor: lifecycleAccent(trend.lifecycle) }}
       onClick={onClick}
       role="button"
       tabIndex={0}
