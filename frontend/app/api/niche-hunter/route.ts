@@ -107,13 +107,14 @@ function buyerIntentScore(keywords: string[]): number {
 // Cluster scoring
 // ──────────────────────────────────────────────────────────
 
+// margin removed (unreliable supplier data); its 0.1 folded into buyerIntent,
+// the strongest opportunity signal.
 const WEIGHTS = {
   size: 0.2,
-  buyerIntent: 0.25,
+  buyerIntent: 0.35,
   recency: 0.15,
   sourceDiversity: 0.1,
   relevance: 0.1,
-  margin: 0.1,
   repeatPurchase: 0.1,
 } as const;
 
@@ -135,8 +136,7 @@ function scoreCluster(
   // Average relevance: 0-1 → 0-100
   const relevanceNorm = cluster.avgRelevance * 100;
 
-  // Margin & repeat from niche scores (0-100)
-  const marginNorm = cluster.categoryNicheScore?.margin_score ?? 50;
+  // Repeat-purchase from niche scores (0-100)
   const repeatNorm = cluster.categoryNicheScore?.repeat_purchase_score ?? 50;
 
   const factors: ScoreFactor[] = [
@@ -169,12 +169,6 @@ function scoreCluster(
       label: "Avg Relevance",
       value: relevanceNorm,
       weight: WEIGHTS.relevance,
-    },
-    {
-      key: "margin",
-      label: "Margin Tier",
-      value: marginNorm,
-      weight: WEIGHTS.margin,
     },
     {
       key: "repeatPurchase",
@@ -257,19 +251,6 @@ function generateActionRecipe(cluster: Omit<Cluster, "actionRecipe">): string[] 
     `Content moat: Use Write About tab to publish 3 articles targeting: ${topKeywords.join(", ")}`
   );
 
-  // Margin/repeat warning
-  if (cluster.categoryNicheScore) {
-    const margin = cluster.categoryNicheScore.margin_score;
-    if (margin < 50) {
-      recipe.push(
-        `⚠ Low margin category (${margin}/100) — focus on bundling or affiliate model, not own-brand`
-      );
-    } else if (margin >= 70) {
-      recipe.push(
-        `Strong margin category (${margin}/100) — own-brand or private label viable`
-      );
-    }
-  }
 
   return recipe;
 }

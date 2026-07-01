@@ -62,11 +62,16 @@ export async function GET() {
     const provRows = await queryAll<{ provenance: string | null }>(
       `SELECT provenance FROM niche_scores WHERE date = (SELECT MAX(date) FROM niche_scores)`
     );
+    // margin + sourcing are excluded from the composite (no reliable supplier
+    // data), so they're excluded from the trust % too — it reflects only the
+    // components that actually drive the score.
+    const SCORED = new Set(["trend", "competition", "content", "repeat_purchase"]);
     let real = 0, totalComp = 0;
     for (const r of provRows) {
       if (!r.provenance) continue;
       try {
-        for (const v of Object.values(JSON.parse(r.provenance) as Record<string, string>)) {
+        for (const [k, v] of Object.entries(JSON.parse(r.provenance) as Record<string, string>)) {
+          if (!SCORED.has(k)) continue;
           totalComp++;
           if (v === "real") real++;
         }

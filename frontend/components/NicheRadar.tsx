@@ -17,11 +17,11 @@ interface NicheRadarProps {
   colorMap?: Record<string, string>;
 }
 
+// margin + sourcing omitted: supplier cost data is unreliable, so those axes
+// were removed from the composite and the radar.
 const DIMENSION_LABELS: Record<string, string> = {
   trend_score: "Trend",
-  margin_score: "Margin",
   competition_score: "Competition",
-  sourcing_score: "Sourcing",
   content_score: "Content",
   repeat_purchase_score: "Repeat Purchase",
 };
@@ -29,9 +29,7 @@ const DIMENSION_LABELS: Record<string, string> = {
 // niche_scores provenance keys for each radar dimension
 const DIMENSION_PROVENANCE_KEY: Record<string, string> = {
   trend_score: "trend",
-  margin_score: "margin",
   competition_score: "competition",
-  sourcing_score: "sourcing",
   content_score: "content",
   repeat_purchase_score: "repeat_purchase",
 };

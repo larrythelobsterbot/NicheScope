@@ -102,11 +102,11 @@ export default function NicheCard({
         </div>
       </div>
 
-      {/* Micro progress bars */}
+      {/* Micro progress bars — the reliable signals the score is built on */}
       <div className="space-y-1.5">
         <MicroBar label="TRD" value={score.trend_score} />
-        <MicroBar label="MRG" value={score.margin_score} />
-        <MicroBar label="SRC" value={score.sourcing_score} />
+        <MicroBar label="CMP" value={score.competition_score} />
+        <MicroBar label="CNT" value={score.content_score} />
       </div>
     </div>
   );

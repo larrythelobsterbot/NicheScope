@@ -166,14 +166,21 @@ def get_categories():
     return [r[0] for r in rows]
 
 
-# Scoring weights (these stay in config, not DB)
+# Scoring weights (these stay in config, not DB).
+# margin + sourcing are set to 0: both depend on the suppliers table, which we
+# can't populate with reliable cost data, so weighting them would let fallback
+# constants drive the composite. Their 0.35 was redistributed proportionally to
+# the reliable signals. margin_score / sourcing_score are still computed and
+# stored (for provenance and future re-enable) — just not weighted or shown.
+# To re-enable, restore the original weights: trend .25 / margin .20 /
+# competition .15 / sourcing .15 / content .10 / repeat_purchase .15.
 SCORE_WEIGHTS = {
-    "trend": 0.25,
-    "margin": 0.20,
-    "competition": 0.15,
-    "sourcing": 0.15,
-    "content": 0.10,
-    "repeat_purchase": 0.15,
+    "trend": 0.38,
+    "margin": 0.0,
+    "competition": 0.23,
+    "sourcing": 0.0,
+    "content": 0.15,
+    "repeat_purchase": 0.24,
 }
 
 # Alert thresholds

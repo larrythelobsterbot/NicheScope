@@ -5,7 +5,6 @@ import Link from "next/link";
 import type {
   KeywordTrend,
   NicheScore,
-  Supplier,
   Alert,
 } from "@/lib/types";
 import { getCategoryColorMap, type CategoryInfo } from "@/lib/colors";
@@ -15,9 +14,7 @@ import BubbleChart from "@/components/BubbleChart";
 import SparklineGrid from "@/components/SparklineGrid";
 import NicheCard from "@/components/NicheCard";
 import TrendChart from "@/components/TrendChart";
-import MarginAnalysis from "@/components/MarginAnalysis";
 import NicheRadar from "@/components/NicheRadar";
-import SupplierTable from "@/components/SupplierTable";
 import RisingKeywords from "@/components/RisingKeywords";
 import BreakoutSignals from "@/components/BreakoutSignals";
 import HeatMap from "@/components/HeatMap";
@@ -30,7 +27,7 @@ import Skeleton from "@/components/Skeleton";
 import DataFreshness from "@/components/DataFreshness";
 import OpportunityHeader from "@/components/OpportunityHeader";
 
-type TabKey = "hot" | "writeAbout" | "nicheHunter" | "sparklines" | "bubbles" | "margins" | "radar" | "suppliers" | "heatmap";
+type TabKey = "hot" | "writeAbout" | "nicheHunter" | "sparklines" | "bubbles" | "radar" | "heatmap";
 
 export default function Dashboard() {
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
@@ -38,7 +35,6 @@ export default function Dashboard() {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [trends, setTrends] = useState<KeywordTrend[]>([]);
   const [scores, setScores] = useState<NicheScore[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [risingKeywords, setRisingKeywords] = useState<
     { keyword: string; category: string; interest_score: number; change_pct: number }[]
   >([]);
@@ -64,18 +60,16 @@ export default function Dashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [catRes, trendsRes, keywordsRes, suppliersRes, healthRes] = await Promise.all([
+      const [catRes, trendsRes, keywordsRes, healthRes] = await Promise.all([
         fetch("/api/categories"),
         fetch(`/api/trends?days=90${selectedCategory ? `&category=${selectedCategory}` : ""}`),
         fetch("/api/keywords?rising=true&limit=20"),
-        fetch("/api/suppliers"),
         fetch("/api/health").catch(() => null),
       ]);
 
       const catData = await catRes.json();
       const trendsData = await trendsRes.json();
       const keywordsData = await keywordsRes.json();
-      const suppliersData = await suppliersRes.json();
 
       const cats = catData.categories || [];
       setCategories(cats);
@@ -85,7 +79,6 @@ export default function Dashboard() {
       setScores(trendsData.scores || []);
       setRisingKeywords(keywordsData.keywords || []);
       setAlerts(keywordsData.alerts || []);
-      setSuppliers(suppliersData.suppliers || []);
 
       if (healthRes && healthRes.ok) {
         const healthData = await healthRes.json();
@@ -207,14 +200,6 @@ export default function Dashboard() {
         { key: "bubbles", label: "Bubble Map" },
         { key: "radar", label: "Niche Radar" },
         { key: "heatmap", label: "Geo Heatmap" },
-      ],
-    },
-    {
-      key: "sourcing",
-      label: "Sourcing",
-      tabs: [
-        { key: "margins", label: "Margins" },
-        { key: "suppliers", label: "Suppliers" },
       ],
     },
   ];
@@ -485,9 +470,7 @@ export default function Dashboard() {
                   activeTab === "nicheHunter" ? "list" :
                   activeTab === "sparklines" ? "chart" :
                   activeTab === "bubbles" ? "chart" :
-                  activeTab === "margins" ? "chart" :
                   activeTab === "radar" ? "radar" :
-                  activeTab === "suppliers" ? "table" :
                   "map"
                 } />
               ) : (
@@ -526,18 +509,10 @@ export default function Dashboard() {
                       }}
                     />
                   )}
-                  {activeTab === "margins" && (
-                    <MarginAnalysis suppliers={suppliers} selectedCategory={selectedCategory} />
-                  )}
                   {activeTab === "radar" && (
                     <NicheRadar
                       scores={selectedCategory ? scores.filter(s => s.category === selectedCategory) : scores}
                       colorMap={colorMap}
-                    />
-                  )}
-                  {activeTab === "suppliers" && (
-                    <SupplierTable
-                      suppliers={selectedCategory ? suppliers.filter(s => s.product_focus.toLowerCase().includes(selectedCategory)) : suppliers}
                     />
                   )}
                   {activeTab === "heatmap" && (

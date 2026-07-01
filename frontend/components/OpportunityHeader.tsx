@@ -154,9 +154,9 @@ export default function OpportunityHeader({
             >
               Explore {cap(op.category)} →
             </button>
-            {op.margin_score !== null && (
+            {op.overall_score !== null && (
               <span className="px-4 py-2 rounded-lg text-xs font-medium bg-white/[0.03] text-slate-400 border border-white/5">
-                Margin score {op.margin_score}/100
+                Niche score {op.overall_score}/100
               </span>
             )}
           </div>
