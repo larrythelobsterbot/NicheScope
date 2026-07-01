@@ -1,2 +1,5 @@
 .vercel
 tsconfig.tsbuildinfo
+
+# Playwright CLI scratch
+.playwright-cli/
