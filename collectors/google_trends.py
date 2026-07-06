@@ -65,8 +65,22 @@ def collect_trends():
     MAX_CONSECUTIVE_429 = 3  # Give up after 3 consecutive 429 errors
     base_delay = 60  # seconds between successful batches
 
-    for i in range(0, len(due), 5):
-        batch = [kw for kw, _ in due[i : i + 5]]
+    # Build batches that never cross a category boundary: Google normalizes a
+    # multi-keyword request to the batch max, so mixing a mega-term with niche
+    # keywords quantizes the niche series to 0-5 (the July 2026 corruption).
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_cat = None
+    for kw, cat in due:
+        if cat != current_cat or len(current) == 5:
+            if current:
+                batches.append(current)
+            current, current_cat = [], cat
+        current.append(kw)
+    if current:
+        batches.append(current)
+
+    for batch in batches:
         logger.info(f"Collecting trends for batch: {batch}")
 
         try:

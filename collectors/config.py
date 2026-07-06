@@ -112,13 +112,20 @@ _LIFECYCLE_RANK = {
 
 
 def get_keywords_due_for_collection():
-    """Active keywords due for a Google Trends refresh today, in priority order.
+    """Active keywords due for a Google Trends refresh today.
 
     Returns a flat list of (keyword, category) tuples. "Due" means the keyword
-    has not been collected within its lifecycle cadence (or never has). The list
-    is ordered so a rate-limited partial run covers rising, high-interest
-    keywords before stale ones — and interleaves categories implicitly because
-    the sort key is lifecycle+interest, not category.
+    has not been collected within its lifecycle cadence (or never has).
+
+    ORDERING IS LOAD-BEARING — batches must stay category-blocked and stable.
+    Google Trends normalizes a multi-keyword request to the LARGEST keyword in
+    the batch. A global priority sort (lifecycle, interest) mixed mega-terms
+    like "shark" into batches with niche keywords, quantizing them to 0-5 and
+    destroying their series when the 12-month rewrite landed (July 2026 data
+    corruption). Same-category batches keep magnitudes comparable, and stable
+    within-category order keeps normalization consistent run-to-run.
+    Categories are ordered by their most urgent keyword so a rate-limited
+    partial run still reaches rising categories first.
     """
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -153,7 +160,16 @@ def get_keywords_due_for_collection():
         if is_due:
             due.append(r)
 
-    due.sort(key=lambda r: (_LIFECYCLE_RANK.get(r["lifecycle"], 0), -r["interest"]))
+    # Category urgency = best lifecycle rank of any due keyword in it
+    cat_rank: dict = {}
+    for r in due:
+        rank = _LIFECYCLE_RANK.get(r["lifecycle"], 0)
+        if rank < cat_rank.get(r["category"], 99):
+            cat_rank[r["category"]] = rank
+
+    # Urgent categories first; within a category, stable alphabetical order so
+    # batch composition (and thus Google's normalization) stays consistent.
+    due.sort(key=lambda r: (cat_rank[r["category"]], r["category"], r["keyword"]))
     return [(r["keyword"], r["category"]) for r in due]
 
 

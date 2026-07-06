@@ -71,18 +71,41 @@ def test_new_keyword_with_no_metrics_is_due(temp_db, monkeypatch):
     assert "brand new kw" in due
 
 
-def test_priority_order_rising_high_interest_first(temp_db, monkeypatch):
-    _kw(temp_db, "declining big", "home", "declining", 90, last_collected_days=60)
-    _kw(temp_db, "stable mid", "home", "stable", 50, last_collected_days=60)
-    _kw(temp_db, "rising low", "home", "accelerating", 20, last_collected_days=60)
-    _kw(temp_db, "rising high", "home", "emerging", 70, last_collected_days=60)
+def test_categories_block_together_and_urgent_first(temp_db, monkeypatch):
+    """Batches must never mix categories (Google normalizes a batch to its max
+    keyword — mixing magnitudes quantizes niche series: the July 2026
+    corruption). Order: urgent categories first, category-contiguous, stable."""
+    _kw(temp_db, "wellness stable", "wellness", "stable", 50, last_collected_days=60)
+    _kw(temp_db, "travel rising", "travel", "emerging", 70, last_collected_days=60)
+    _kw(temp_db, "travel stable", "travel", "stable", 90, last_collected_days=60)
+    _kw(temp_db, "wellness stable 2", "wellness", "stable", 40, last_collected_days=60)
 
-    order = [kw for kw, _ in _due_keywords(temp_db, monkeypatch)]
-    # rising (rank 0) before stable/peaking (1) before declining (2);
-    # within rising, higher interest first
-    assert order.index("rising high") < order.index("rising low")
-    assert order.index("rising low") < order.index("stable mid")
-    assert order.index("stable mid") < order.index("declining big")
+    due = _due_keywords(temp_db, monkeypatch)
+    cats = [cat for _, cat in due]
+    # travel has a rising keyword -> travel block first, then wellness block
+    assert cats == ["travel", "travel", "wellness", "wellness"]
+    # stable alphabetical order within a category (consistent normalization)
+    travel_kws = [kw for kw, cat in due if cat == "travel"]
+    assert travel_kws == sorted(travel_kws)
+
+
+def test_due_list_never_interleaves_categories(temp_db, monkeypatch):
+    for i in range(7):
+        _kw(temp_db, f"home kw {i}", "home", "stable", 30, last_collected_days=60)
+    for i in range(3):
+        _kw(temp_db, f"pets kw {i}", "pets", "stable", 30, last_collected_days=60)
+
+    cats = [cat for _, cat in _due_keywords(temp_db, monkeypatch)]
+    # each category appears as one contiguous block
+    seen, blocks = set(), 0
+    prev = None
+    for c in cats:
+        if c != prev:
+            blocks += 1
+            assert c not in seen, f"category {c} appears in two separate blocks"
+            seen.add(c)
+            prev = c
+    assert blocks == 2
 
 
 def test_returns_keyword_category_pairs(temp_db, monkeypatch):
