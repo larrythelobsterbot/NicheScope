@@ -265,3 +265,32 @@ def test_sweep_active_junk_recent_only(temp_db):
     assert _is_tracked(temp_db, "saiyaara showtimes") is False
     assert _is_tracked(temp_db, "14k gold necklace") is True
     assert _is_tracked(temp_db, "trump news") is True  # outside window
+
+
+def test_bulk_import_approved_past_share_cap_but_junk_filtered(temp_db):
+    """Owner bulk imports bypass the share cap and relevance bar, but junk
+    is still rejected — this is the fix for the July 2026 import that
+    bypassed the filter entirely."""
+    from pending_triage import triage_pending
+
+    _seed_active(temp_db, "beauty", 18)  # beauty way over the 40% share cap
+    _seed_active(temp_db, "home", 2)
+    _add_pending(temp_db, "anua pdrn 100 serum", "beauty", 0.7,
+                 source="bulk_import", parent="serums")
+    _add_pending(temp_db, "saiyaara showtimes", "beauty", 0.7,
+                 source="bulk_import")
+
+    triage_pending()
+
+    # non-junk import approved despite dominant category, subcategory carried
+    assert _status(temp_db, "anua pdrn 100 serum") == "auto_approved"
+    conn = _db(temp_db)
+    row = conn.execute(
+        "SELECT category, subcategory, is_active FROM keywords WHERE keyword='anua pdrn 100 serum'"
+    ).fetchone()
+    conn.close()
+    assert row["is_active"] == 1 and row["category"] == "beauty"
+    assert row["subcategory"] == "serums"
+    # junk import rejected
+    assert _status(temp_db, "saiyaara showtimes") == "auto_rejected"
+    assert _is_tracked(temp_db, "saiyaara showtimes") is False

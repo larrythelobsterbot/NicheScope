@@ -68,13 +68,18 @@ export async function POST(request: NextRequest) {
         newCategories.push(category);
       }
 
-      // Insert keyword (skip duplicates)
+      // Queue for triage instead of inserting directly into keywords: the
+      // junk filter runs Python-side, so imports flow through
+      // pending_keywords and the daily triage auto-approves everything that
+      // isn't junk (source='bulk_import' bypasses the category-share cap).
+      // parent_keyword carries the subcategory so triage can restore it.
       try {
         const result = await execute(
-          `INSERT INTO keywords (keyword, category, subcategory, is_active)
-           VALUES (?, ?, ?, 1)
-           ON CONFLICT(keyword) DO NOTHING`,
-          [keyword, category, subcategory]
+          `INSERT OR IGNORE INTO pending_keywords
+             (keyword, suggested_category, source, parent_keyword,
+              relevance_score, status)
+           VALUES (?, ?, 'bulk_import', ?, 0.7, 'pending')`,
+          [keyword, category, subcategory ?? ""]
         );
         if (result.rowsAffected > 0) {
           added++;
@@ -86,7 +91,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ added, skipped, newCategories });
+    return NextResponse.json({
+      added,
+      skipped,
+      newCategories,
+      note: "Queued for triage — junk-filtered and activated within 24h (daily 5:30 HKT).",
+    });
   } catch (error) {
     console.error("Import error:", error);
     return NextResponse.json({ error: "Failed to import CSV" }, { status: 500 });

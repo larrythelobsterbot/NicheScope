@@ -145,6 +145,33 @@ def triage_pending():
             if junk:
                 _reject(row, "junk")
                 continue
+
+            # Owner bulk imports: deliberate lists, so once past the junk
+            # filter they're approved unconditionally — no share cap, no
+            # relevance bar, honoring the owner's category (+ subcategory,
+            # carried in parent_keyword by the import routes).
+            if row["source"] == "bulk_import":
+                cursor.execute(
+                    """INSERT INTO keywords (keyword, category, subcategory, is_active)
+                       VALUES (?, ?, NULLIF(?, ''), 1)
+                       ON CONFLICT(keyword) DO UPDATE SET
+                           category = excluded.category,
+                           subcategory = COALESCE(excluded.subcategory, keywords.subcategory),
+                           is_active = 1""",
+                    (row["keyword"], category, row["parent_keyword"] or ""),
+                )
+                cursor.execute(
+                    """INSERT INTO categories (name, is_active) VALUES (?, 1)
+                       ON CONFLICT(name) DO NOTHING""",
+                    (category,),
+                )
+                cursor.execute(
+                    "UPDATE pending_keywords SET status = 'auto_approved' WHERE id = ?",
+                    (row["id"],),
+                )
+                approved += 1
+                continue
+
             if relevance < TRIAGE["auto_reject_relevance"]:
                 _reject(row, "low_relevance")
                 continue

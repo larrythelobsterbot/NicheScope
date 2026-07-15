@@ -47,15 +47,15 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Queue for triage (see /api/import): junk-filtered Python-side, then
+      // auto-approved by the daily triage. parent_keyword carries subcategory.
       try {
         await execute(
-          `INSERT INTO keywords (keyword, category, subcategory, is_active)
-           VALUES (?, ?, ?, 1)
-           ON CONFLICT(keyword) DO UPDATE SET
-             category = excluded.category,
-             subcategory = COALESCE(excluded.subcategory, keywords.subcategory),
-             is_active = 1`,
-          [kw, cat, sub]
+          `INSERT OR IGNORE INTO pending_keywords
+             (keyword, suggested_category, source, parent_keyword,
+              relevance_score, status)
+           VALUES (?, ?, 'bulk_import', ?, 0.7, 'pending')`,
+          [kw, cat, sub ?? ""]
         );
         added++;
       } catch {
@@ -63,7 +63,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ added, skipped, newCategories });
+    return NextResponse.json({
+      added,
+      skipped,
+      newCategories,
+      note: "Queued for triage — junk-filtered and activated within 24h (daily 5:30 HKT).",
+    });
   } catch (error) {
     console.error("Bulk keyword import error:", error);
     return NextResponse.json(
