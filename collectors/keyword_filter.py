@@ -45,6 +45,15 @@ _ENTERTAINMENT_PATTERNS: list[re.Pattern] = [
     # Note: "is X a true story" / "based on true story" already caught above;
     # this catches bare "X true story" endings.
     re.compile(r'\btrue story\b', re.I),
+    # Cinema / episode / fansub queries (July 2026 bulk-import trash wave)
+    re.compile(r'\bshowtimes?\b', re.I),
+    re.compile(r'\bbox office\b', re.I),
+    re.compile(r'\beng(?:lish)? subs?\b', re.I),
+    re.compile(r'\bep \d+\b', re.I),           # "ep 10 eng sub" ("episode N" already covered)
+    re.compile(r'\b(bilibili|dailymotion|dramacool)\b', re.I),
+    re.compile(r'\bstreaming$', re.I),          # "<title> streaming"; protects "streaming microphone"
+    re.compile(r'\b(png|wallpapers?)$', re.I),  # fandom asset hunts
+    re.compile(r'\btranslation$', re.I),        # "<lyrics> latin translation"
 ]
 
 # ---------------------------------------------------------------------------
@@ -76,6 +85,16 @@ _NEWS_PATTERNS: list[re.Pattern] = [
                r'crypto|bitcoin|ethereum|stock market|federal reserve|'
                r'mortgage rates?|gold price|oil price)\b.*\bnews\b', re.I),
     re.compile(r'\b(ai|artificial intelligence|crypto|tech|semiconductor)\s+news\b', re.I),
+    # Commodity price-checking (not product searches): "mcx gold silver prices",
+    # "gold and silver price today india". Protects products like "14k gold
+    # necklace" because it requires the price/rate token.
+    re.compile(r'\b(gold|silver|platinum|crude|petrol|diesel)\b[^,]*\b(price|prices|rate|rates)\b', re.I),
+    re.compile(r'\bmcx\b', re.I),
+    # Event/sports spectacles (plural "olympics" protects "olympic barbell")
+    re.compile(r'\bolympics\b', re.I),
+    re.compile(r'\bworld cup\b', re.I),
+    # Finance/admin process queries
+    re.compile(r'\bkyc\b', re.I),
 ]
 
 # ---------------------------------------------------------------------------
@@ -248,6 +267,14 @@ def _has_brand_signal(text_lower: str) -> bool:
 # Main public function
 # ---------------------------------------------------------------------------
 
+# Bare utility/navigation queries with zero product intent — exact match only,
+# so they can never clip a longer legitimate keyword.
+_EXACT_JUNK: frozenset[str] = frozenset([
+    "maps", "weather", "calculator", "translate", "news", "nail salon",
+    "google", "youtube", "amazon",
+])
+
+
 def is_junk(keyword: str) -> tuple[bool, str]:
     """
     Decide whether *keyword* is junk that should be blocked.
@@ -261,6 +288,10 @@ def is_junk(keyword: str) -> tuple[bool, str]:
         return True, "empty keyword"
 
     kw_lower = keyword.strip().lower()
+
+    # --- Rule 0: bare utility queries, exact match ---
+    if kw_lower in _EXACT_JUNK:
+        return True, "bare utility/navigation query"
 
     # --- Rule 1: Entertainment / streaming ---
     for pat in _ENTERTAINMENT_PATTERNS:

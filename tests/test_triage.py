@@ -227,3 +227,41 @@ def test_discovery_parents_prefer_rising_keywords(temp_db):
     )
     conn.close()
     assert parents[0] == ("home", "fast kw")
+
+
+def test_bulk_import_trash_wave_patterns():
+    """July 2026 bulk import bypassed the filter; these patterns now catch it."""
+    from keyword_filter import is_junk
+
+    for junk in ["saiyaara showtimes", "wuthering heights streaming",
+                 "our unwritten seoul ep 10 eng sub bilibili",
+                 "mcx gold silver prices", "gold and silver price today india",
+                 "2026 winter olympics medals", "pension kyc", "maps",
+                 "saja boys png", "your idol latin translation"]:
+        assert is_junk(junk)[0] is True, junk
+    for keep in ["olympic barbell set", "14k gold necklace",
+                 "streaming microphone for podcasting", "epsom salt bath",
+                 "world map wall art", "silver jewelry cleaner"]:
+        assert is_junk(keep)[0] is False, keep
+
+
+def test_sweep_active_junk_recent_only(temp_db):
+    from pending_triage import sweep_active_junk
+
+    conn = _db(temp_db)
+    # recent junk (bulk-imported yesterday) -> swept
+    conn.execute("INSERT INTO keywords (keyword, category, is_active, added_at) "
+                 "VALUES ('saiyaara showtimes', 'beauty', 1, datetime('now','-1 day'))")
+    # recent legit -> kept
+    conn.execute("INSERT INTO keywords (keyword, category, is_active, added_at) "
+                 "VALUES ('14k gold necklace', 'jewelry', 1, datetime('now','-1 day'))")
+    # OLD junk (predates window) -> untouched by this sweep
+    conn.execute("INSERT INTO keywords (keyword, category, is_active, added_at) "
+                 "VALUES ('trump news', 'beauty', 1, datetime('now','-90 days'))")
+    conn.commit(); conn.close()
+
+    swept = sweep_active_junk(days=14)
+    assert swept == 1
+    assert _is_tracked(temp_db, "saiyaara showtimes") is False
+    assert _is_tracked(temp_db, "14k gold necklace") is True
+    assert _is_tracked(temp_db, "trump news") is True  # outside window

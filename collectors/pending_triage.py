@@ -66,13 +66,40 @@ def _category_shares(cursor) -> dict:
     return {r["category"]: r["cnt"] / total for r in rows}
 
 
+def sweep_active_junk(days: int = 14) -> int:
+    """Deactivate junk among recently-added ACTIVE keywords.
+
+    Safety net for paths that bypass the discovery filter — the dashboard's
+    bulk-import routes insert straight into `keywords`, so trash never meets
+    is_junk() until this sweep. Recently-added only, so a filter regression
+    can't mass-deactivate the long-standing watchlist in one night.
+    Returns the number deactivated.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, keyword FROM keywords WHERE is_active = 1 "
+        "AND added_at >= datetime('now', ?)",
+        (f"-{int(days)} days",),
+    ).fetchall()
+    junk_ids = [(r["id"],) for r in rows if is_junk(r["keyword"])[0]]
+    if junk_ids:
+        db.executemany("UPDATE keywords SET is_active = 0 WHERE id = ?", junk_ids)
+        db.commit()
+        logger.info(f"Active-junk sweep: deactivated {len(junk_ids)} of {len(rows)} recent keywords")
+    db.close()
+    return len(junk_ids)
+
+
 def triage_pending():
-    """Run one triage pass over status='pending' keywords.
+    """Run one triage pass over status='pending' keywords, plus a junk sweep
+    of recently-added active keywords (bulk imports bypass the filter).
 
     Returns (success: bool, items_actioned: int, error: str | None).
     Never raises to the scheduler.
     """
     try:
+        swept = sweep_active_junk()
+
         db = get_db()
         cursor = db.cursor()
 
@@ -86,6 +113,8 @@ def triage_pending():
         if not pending:
             db.close()
             logger.info("Triage: queue is empty.")
+            if swept:
+                return (True, swept, None)
             # Skip reason (not None) so the stall guard doesn't treat a
             # healthy empty queue as a silently-broken collector.
             return (True, 0, "queue empty")
@@ -163,7 +192,7 @@ def triage_pending():
             f"(junk={rejected['junk']}, low_relevance={rejected['low_relevance']}, "
             f"stale={rejected['stale']}), {remaining} left for human review."
         )
-        return (True, approved + total_rejected, None)
+        return (True, approved + total_rejected + swept, None)
     except Exception as e:
         logger.error(f"Triage failed: {e}", exc_info=True)
         return (False, 0, str(e))
