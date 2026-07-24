@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Migration 002: rename tiktok_trends -> content_trends with YouTube-compatible schema.
+"""Migration 002: introduce content_trends with a YouTube-compatible schema.
 
 Idempotent: safe to re-run. The old tiktok_trends table (if it exists from init_db)
-is dropped and replaced by a VIEW that reads from content_trends with source='youtube'.
+is preserved as tiktok_trends_legacy and replaced by a VIEW that reads from
+content_trends with source='youtube'.
 Also extends collector_health with items_collected and last_status columns
 (Track 2 will replace this table wholesale; these columns are the minimum we need
 now so run_collector_job can record honest outcomes).
@@ -36,13 +37,22 @@ def migrate(db_path: str) -> None:
             """
         )
 
-        # 2. If tiktok_trends is a TABLE (from init_db.py), drop it so the view can
-        #    take its place. If it's already a view, drop it so we can re-create.
+        # 2. If tiktok_trends is a TABLE (from init_db.py), archive it intact so
+        #    legacy TikTok observations are not destroyed or mixed into current
+        #    YouTube-derived scores. If it's already a view, drop it so we can
+        #    re-create it below.
         row = conn.execute(
             "SELECT type FROM sqlite_master WHERE name='tiktok_trends'"
         ).fetchone()
         if row and row[0] == "table":
-            conn.execute("DROP TABLE tiktok_trends")
+            archive = conn.execute(
+                "SELECT type FROM sqlite_master WHERE name='tiktok_trends_legacy'"
+            ).fetchone()
+            if archive:
+                raise RuntimeError(
+                    "Refusing to replace existing tiktok_trends_legacy archive"
+                )
+            conn.execute("ALTER TABLE tiktok_trends RENAME TO tiktok_trends_legacy")
         elif row and row[0] == "view":
             conn.execute("DROP VIEW tiktok_trends")
 

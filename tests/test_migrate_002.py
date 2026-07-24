@@ -26,6 +26,42 @@ def test_creates_tiktok_trends_view(temp_db):
     assert any(r[0] == "view" for r in rows), f"Expected view, got {rows}"
 
 
+def test_archives_legacy_tiktok_rows_without_mixing_sources(temp_db):
+    conn = sqlite3.connect(temp_db)
+    conn.execute(
+        "INSERT INTO keywords (keyword, category) VALUES (?, ?)",
+        ("legacy trend", "general"),
+    )
+    conn.execute(
+        """INSERT INTO tiktok_trends
+           (keyword, hashtag, video_count, view_count, ad_count, date, collected_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("legacy trend", "#legacy", 12, 3456, 7, "2025-01-02", "2025-01-02 03:04:05"),
+    )
+    conn.commit()
+    conn.close()
+
+    migrate(temp_db)
+    migrate(temp_db)
+
+    conn = sqlite3.connect(temp_db)
+    archived = conn.execute(
+        """SELECT keyword, hashtag, video_count, view_count, ad_count, date, collected_at
+           FROM tiktok_trends_legacy"""
+    ).fetchall()
+    content_count = conn.execute("SELECT COUNT(*) FROM content_trends").fetchone()[0]
+    object_type = conn.execute(
+        "SELECT type FROM sqlite_master WHERE name='tiktok_trends'"
+    ).fetchone()[0]
+    conn.close()
+
+    assert archived == [
+        ("legacy trend", "#legacy", 12, 3456, 7, "2025-01-02", "2025-01-02 03:04:05")
+    ]
+    assert content_count == 0
+    assert object_type == "view"
+
+
 def test_idempotent(temp_db):
     migrate(temp_db)
     migrate(temp_db)  # must not raise
