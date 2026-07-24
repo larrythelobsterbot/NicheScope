@@ -129,13 +129,16 @@ ENVFILE
             exit 1
         fi
 
+        DEPLOY_DB_PATH="$(env -u DB_PATH python3 scripts/db_path.py)"
+        echo "=== Using SQLite database: $DEPLOY_DB_PATH ==="
+
         echo "=== Ensuring directories exist ==="
-        mkdir -p data logs backups
+        mkdir -p "$(dirname "$DEPLOY_DB_PATH")" logs backups
 
         echo "=== Initializing database (if needed) ==="
-        if [ ! -f data/nichescope.db ]; then
-            python3 scripts/init_db.py
-            python3 scripts/seed_watchlist.py
+        if [ ! -f "$DEPLOY_DB_PATH" ]; then
+            DB_PATH="$DEPLOY_DB_PATH" python3 scripts/init_db.py
+            DB_PATH="$DEPLOY_DB_PATH" python3 scripts/seed_watchlist.py
             echo "Database initialized and seeded."
         else
             echo "Database already exists, skipping init."
@@ -143,7 +146,7 @@ ENVFILE
 
         echo "=== Running database migrations ==="
         for migration in scripts/migrate_*.py; do
-            DB_PATH="${DB_PATH:-data/nichescope.db}" python3 "$migration"
+            DB_PATH="$DEPLOY_DB_PATH" python3 "$migration"
         done
 
         echo "=== Making scripts executable ==="
@@ -158,7 +161,7 @@ ENVFILE
         pm2 delete nichescope-collectors 2>/dev/null || true
 
         # Start using ecosystem config
-        pm2 start ecosystem.config.js
+        DB_PATH="$DEPLOY_DB_PATH" pm2 start ecosystem.config.js
 
         # Save PM2 config (survives reboots)
         pm2 save
@@ -226,12 +229,16 @@ update() {
         set -e
         cd /opt/nichescope
 
+        DEPLOY_DB_PATH="$(env -u DB_PATH python3 scripts/db_path.py)"
+        echo "=== Using SQLite database: $DEPLOY_DB_PATH ==="
+        mkdir -p "$(dirname "$DEPLOY_DB_PATH")"
+
         echo "=== Ensuring base schema exists ==="
-        python3 scripts/init_db.py
+        DB_PATH="$DEPLOY_DB_PATH" python3 scripts/init_db.py
 
         echo "=== Running database migrations ==="
         for migration in scripts/migrate_*.py; do
-            DB_PATH="${DB_PATH:-data/nichescope.db}" python3 "$migration"
+            DB_PATH="$DEPLOY_DB_PATH" python3 "$migration"
         done
 
         echo "=== Installing any new Python dependencies ==="
@@ -245,7 +252,7 @@ update() {
         cd ..
 
         echo "=== Reloading PM2 definitions and protected environment ==="
-        env -u NICHESCOPE_AUTH_USERNAME -u NICHESCOPE_AUTH_PASSWORD pm2 startOrReload ecosystem.config.js --update-env
+        env -u NICHESCOPE_AUTH_USERNAME -u NICHESCOPE_AUTH_PASSWORD DB_PATH="$DEPLOY_DB_PATH" pm2 startOrReload ecosystem.config.js --update-env
 
         echo "=== Current status ==="
         pm2 status

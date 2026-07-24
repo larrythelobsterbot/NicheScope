@@ -2,9 +2,48 @@
 // Usage: pm2 start ecosystem.config.js
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const projectRoot = __dirname;
+
+function parseEnvValue(rawValue) {
+  const value = rawValue.trim();
+  if (!value) return "";
+
+  if (value[0] === '"' || value[0] === "'") {
+    const quote = value[0];
+    let parsed = "";
+    let escaped = false;
+    for (let index = 1; index < value.length; index += 1) {
+      const char = value[index];
+      if (escaped) {
+        if (char !== quote && char !== "\\") parsed += "\\";
+        parsed += char;
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        const trailing = value.slice(index + 1).trim();
+        if (!trailing || trailing.startsWith("#")) return parsed;
+        return value;
+      } else {
+        parsed += char;
+      }
+    }
+    return value;
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    if (
+      value[index] === "#" &&
+      (index === 0 || /\s/.test(value[index - 1]))
+    ) {
+      return value.slice(0, index).trimEnd();
+    }
+  }
+  return value;
+}
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
@@ -17,20 +56,17 @@ function loadEnvFile(filePath) {
     const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (!match) continue;
 
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    values[match[1]] = value;
+    values[match[1]] = parseEnvValue(match[2]);
   }
   return values;
 }
 
 const sharedEnv = loadEnvFile(path.join(projectRoot, ".env"));
+let configuredDbPath = sharedEnv.DB_PATH || path.join("data", "nichescope.db");
+if (configuredDbPath === "~" || configuredDbPath.startsWith(`~${path.sep}`)) {
+  configuredDbPath = path.join(os.homedir(), configuredDbPath.slice(2));
+}
+sharedEnv.DB_PATH = path.resolve(projectRoot, configuredDbPath);
 const logPath = (name) => path.join(projectRoot, "logs", name);
 
 module.exports = {

@@ -4,7 +4,10 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "nichescope.db")
+from db_path import resolve_db_path
+
+
+DB_PATH = str(resolve_db_path())
 
 
 def init_db():

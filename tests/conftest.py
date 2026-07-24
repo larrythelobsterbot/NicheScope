@@ -34,10 +34,10 @@ def temp_db(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DB_PATH", str(db_path))
 
-    # init_db.py captures DB_PATH at import with no env fallback, so we
-    # import it, override DB_PATH on the module, and call init_db() directly.
+    # init_db.py binds DB_PATH from the environment at import time, so reload it
+    # after monkeypatching before creating the fixture database.
     import init_db as _init
-    _init.DB_PATH = str(db_path)
+    importlib.reload(_init)
     _init.init_db()
 
     # migrate_001_collector_health.py reads DB_PATH from env at import, so

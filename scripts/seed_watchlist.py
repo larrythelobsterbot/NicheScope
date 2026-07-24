@@ -8,9 +8,11 @@ Re-running is safe — uses INSERT OR IGNORE so existing data is not duplicated.
 """
 
 import sqlite3
-import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "nichescope.db")
+from db_path import resolve_db_path
+
+
+DB_PATH = str(resolve_db_path())
 
 # ============================================================
 # KEYWORDS — grouped by category
