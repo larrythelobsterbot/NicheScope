@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { queryAll, queryOne } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Decision-focused metrics for the dashboard command center: what's emerging,
 // what's the single best opportunity, where the watchlist lives, how much of
 // the scoring is real vs fallback. All computed from keyword_metrics +

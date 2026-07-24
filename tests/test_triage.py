@@ -236,12 +236,13 @@ def test_bulk_import_trash_wave_patterns():
     for junk in ["saiyaara showtimes", "wuthering heights streaming",
                  "our unwritten seoul ep 10 eng sub bilibili",
                  "mcx gold silver prices", "gold and silver price today india",
-                 "2026 winter olympics medals", "pension kyc", "maps",
+                 "2026 winter olympics medals", "world cup scores", "pension kyc", "maps",
                  "saja boys png", "your idol latin translation"]:
         assert is_junk(junk)[0] is True, junk
     for keep in ["olympic barbell set", "14k gold necklace",
                  "streaming microphone for podcasting", "epsom salt bath",
-                 "world map wall art", "silver jewelry cleaner"]:
+                 "world map wall art", "silver jewelry cleaner",
+                 "panini fifa world cup sticker collection"]:
         assert is_junk(keep)[0] is False, keep
 
 
@@ -265,6 +266,25 @@ def test_sweep_active_junk_recent_only(temp_db):
     assert _is_tracked(temp_db, "saiyaara showtimes") is False
     assert _is_tracked(temp_db, "14k gold necklace") is True
     assert _is_tracked(temp_db, "trump news") is True  # outside window
+
+
+def test_sweep_active_junk_all_history_supports_dry_run_then_apply(temp_db):
+    from pending_triage import sweep_active_junk
+
+    conn = _db(temp_db)
+    conn.execute("INSERT INTO keywords (keyword, category, is_active, added_at) "
+                 "VALUES ('trump news', 'beauty', 1, datetime('now','-90 days'))")
+    conn.execute("INSERT INTO keywords (keyword, category, is_active, added_at) "
+                 "VALUES ('14k gold necklace', 'jewelry', 1, datetime('now','-90 days'))")
+    conn.commit(); conn.close()
+
+    assert sweep_active_junk(days=None, apply=False) == 1
+    assert _is_tracked(temp_db, "trump news") is True
+    assert _is_tracked(temp_db, "14k gold necklace") is True
+
+    assert sweep_active_junk(days=None, apply=True) == 1
+    assert _is_tracked(temp_db, "trump news") is False
+    assert _is_tracked(temp_db, "14k gold necklace") is True
 
 
 def test_bulk_import_approved_past_share_cap_but_junk_filtered(temp_db):

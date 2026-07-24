@@ -4,6 +4,7 @@ import sqlite3
 import json
 import logging
 from datetime import datetime
+from time_utils import utc_now
 
 import keepa
 
@@ -117,7 +118,7 @@ def collect_products():
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             product_id,
-                            datetime.utcnow().isoformat(),
+                            utc_now().isoformat(),
                             current_price,
                             sales_rank,
                             rating_val,
@@ -125,7 +126,7 @@ def collect_products():
                             offers_count,
                             buy_box_price,
                             stock_status,
-                            datetime.utcnow().isoformat(),
+                            utc_now().isoformat(),
                         ),
                     )
                     total_collected += 1  # per spec: count product_history rows

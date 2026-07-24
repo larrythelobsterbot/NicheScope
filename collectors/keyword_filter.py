@@ -307,6 +307,11 @@ def is_junk(keyword: str) -> tuple[bool, str]:
     # --- Rule 2: News / politics / disasters ---
     for pat in _NEWS_PATTERNS:
         if pat.search(kw_lower):
+            # Event names can be legitimate product modifiers. Preserve explicit
+            # commerce searches such as "world cup sticker collection" while
+            # still rejecting "world cup scores" and generic event queries.
+            if r'world cup' in pat.pattern and _contains_product_indicator(kw_lower):
+                continue
             reason = f"news/politics: matched /{pat.pattern}/"
             logger.debug("is_junk blocked %r — %s", keyword, reason)
             return True, reason

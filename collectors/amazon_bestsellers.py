@@ -22,6 +22,7 @@ import re
 import sqlite3
 import time
 from datetime import datetime
+from time_utils import utc_now
 from typing import List, Tuple
 
 import httpx
@@ -249,7 +250,7 @@ def store_bestseller_products(conn, products: List[dict], category: str) -> int:
     Returns the number of price snapshots written.
     """
     written = 0
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_now().strftime("%Y-%m-%d")
     for product in products:
         if not product.get("asin") or not product.get("price"):
             continue
@@ -280,10 +281,10 @@ def store_bestseller_products(conn, products: List[dict], category: str) -> int:
                VALUES (?, ?, ?, ?, ?)""",
             (
                 row["id"],
-                datetime.utcnow().isoformat(),
+                utc_now().isoformat(),
                 product["price"],
                 product.get("rank"),
-                datetime.utcnow().isoformat(),
+                utc_now().isoformat(),
             ),
         )
         written += 1

@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from datetime import datetime
+from time_utils import utc_now
 
 import httpx
 
@@ -85,7 +86,7 @@ def collect_competitor_traffic():
         db = get_db()
         cursor = db.cursor()
         total_collected = 0
-        current_month = datetime.utcnow().strftime("%Y-%m-01")
+        current_month = utc_now().strftime("%Y-%m-01")
 
         competitors_by_cat = get_competitors()
         for _cat, comp_list in competitors_by_cat.items():
@@ -124,7 +125,7 @@ def collect_competitor_traffic():
                         int(traffic["visits_estimate"] or 0),
                         traffic["top_source"],
                         traffic["bounce_rate"],
-                        datetime.utcnow().isoformat(),
+                        utc_now().isoformat(),
                     ),
                 )
                 total_collected += 1

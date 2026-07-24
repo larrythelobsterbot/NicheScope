@@ -10,7 +10,9 @@ legacy PA-API otherwise.
 import sqlite3
 import json
 import logging
+from importlib.util import find_spec
 from datetime import datetime
+from time_utils import utc_now
 
 from config import (
     DB_PATH,
@@ -26,18 +28,11 @@ from rate_limiter import AMAZON_PA, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports: the package may not be installed
-try:
-    from amazon_creatorsapi import AmazonCreatorsApi
-    HAS_CREATORS = True
-except ImportError:
-    HAS_CREATORS = False
-
-try:
-    from amazon_paapi import AmazonApi
-    HAS_PAAPI = True
-except ImportError:
-    HAS_PAAPI = False
+# Detect optional clients without importing them. The legacy amazon_paapi
+# package emits a deprecation warning at import time, so it is loaded only if
+# legacy credentials actually require that fallback.
+HAS_CREATORS = find_spec("amazon_creatorsapi") is not None
+HAS_PAAPI = find_spec("amazon_paapi") is not None
 
 if not HAS_CREATORS and not HAS_PAAPI:
     logger.warning("python-amazon-paapi not installed. Amazon collector disabled.")
@@ -74,6 +69,8 @@ def get_amazon_api():
     or (None, None) if not configured/installed.
     """
     if HAS_CREATORS and _has_creators_creds():
+        from amazon_creatorsapi import AmazonCreatorsApi
+
         return (
             AmazonCreatorsApi(
                 AMAZON_CREATORS_CREDENTIAL_ID,
@@ -86,6 +83,8 @@ def get_amazon_api():
         )
 
     if HAS_PAAPI and _has_legacy_creds():
+        from amazon_paapi import AmazonApi
+
         return (
             AmazonApi(
                 AMAZON_ACCESS_KEY,
@@ -264,10 +263,10 @@ def collect_amazon_products():
                            VALUES (?, ?, ?, ?, ?)""",
                         (
                             product_id,
-                            datetime.utcnow().isoformat(),
+                            utc_now().isoformat(),
                             prod["price"],
                             prod["sales_rank"],
-                            datetime.utcnow().isoformat(),
+                            utc_now().isoformat(),
                         ),
                     )
                     total_collected += 1

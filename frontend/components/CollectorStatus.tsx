@@ -4,11 +4,17 @@ import { useState, useEffect } from "react";
 
 interface CollectorData {
   last_run: string | null;
+  last_success: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  items_collected: number;
+  consecutive_failures: number;
+  consecutive_zero_runs: number;
   schedule: string;
   requests_today: number;
   daily_limit: number | null;
   remaining: number | null;
-  status: "healthy" | "warning" | "exhausted";
+  status: "healthy" | "warning" | "exhausted" | "stale" | "error" | "never_run";
 }
 
 interface CollectorStatusData {
@@ -18,15 +24,18 @@ interface CollectorStatusData {
 
 const STATUS_STYLES = {
   healthy: { text: "text-emerald-400", dot: "bg-emerald-400", label: "Healthy" },
-  warning: { text: "text-yellow-400", dot: "bg-yellow-400", label: "Low Quota" },
+  warning: { text: "text-yellow-400", dot: "bg-yellow-400", label: "Needs attention" },
   exhausted: { text: "text-red-400", dot: "bg-red-400", label: "Exhausted" },
+  stale: { text: "text-amber-400", dot: "bg-amber-400", label: "Stale" },
+  error: { text: "text-red-400", dot: "bg-red-400", label: "Error" },
+  never_run: { text: "text-slate-400", dot: "bg-slate-500", label: "Never run" },
 };
 
 const COLLECTOR_LABELS: Record<string, string> = {
   google_trends: "Google Trends",
-  keepa: "Keepa",
+  amazon_bestsellers: "Amazon Best Sellers",
   amazon_pa: "Amazon PA-API",
-  tiktok: "TikTok Trends",
+  youtube: "YouTube Trends",
   similarweb: "SimilarWeb",
   alibaba: "Alibaba",
 };
@@ -113,6 +122,17 @@ export default function CollectorStatus() {
                     style={{ width: `${Math.min(usagePct || 0, 100)}%` }}
                   />
                 </div>
+              </div>
+            )}
+
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-600">
+              <span>{c.items_collected.toLocaleString()} rows last run</span>
+              {c.consecutive_zero_runs > 0 && <span>{c.consecutive_zero_runs} zero-row runs</span>}
+              {c.consecutive_failures > 0 && <span>{c.consecutive_failures} failures</span>}
+            </div>
+            {c.last_error && (
+              <div className="mt-2 text-[10px] text-red-400/70 break-words">
+                {c.last_error}
               </div>
             )}
           </div>

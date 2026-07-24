@@ -111,6 +111,10 @@ TELEGRAM_CHAT_ID=
 ALIBABA_APP_KEY=
 ALIBABA_APP_SECRET=
 
+# Required for the private dashboard and every API route.
+NICHESCOPE_AUTH_USERNAME=
+NICHESCOPE_AUTH_PASSWORD=
+
 # Database path (local SQLite for collectors)
 DB_PATH=/opt/nichescope/data/nichescope.db
 ENVFILE
@@ -119,11 +123,14 @@ ENVFILE
             echo ".env already exists, skipping."
         fi
 
+        if ! grep -Eq '^NICHESCOPE_AUTH_USERNAME=.+$' .env || \
+           ! grep -Eq '^NICHESCOPE_AUTH_PASSWORD=.+$' .env; then
+            echo "ERROR: Set NICHESCOPE_AUTH_USERNAME and NICHESCOPE_AUTH_PASSWORD in .env before deployment."
+            exit 1
+        fi
+
         echo "=== Ensuring directories exist ==="
         mkdir -p data logs backups
-
-        echo "=== Running database migrations ==="
-        python3 scripts/migrate_001_collector_health.py
 
         echo "=== Initializing database (if needed) ==="
         if [ ! -f data/nichescope.db ]; then
@@ -133,6 +140,11 @@ ENVFILE
         else
             echo "Database already exists, skipping init."
         fi
+
+        echo "=== Running database migrations ==="
+        for migration in scripts/migrate_*.py; do
+            python3 "$migration"
+        done
 
         echo "=== Making scripts executable ==="
         chmod +x collectors/run_scheduler.sh
@@ -214,9 +226,13 @@ update() {
         set -e
         cd /opt/nichescope
 
-        echo "=== Running database migrations ==="
-        python3 scripts/migrate_001_collector_health.py
+        echo "=== Ensuring base schema exists ==="
         python3 scripts/init_db.py
+
+        echo "=== Running database migrations ==="
+        for migration in scripts/migrate_*.py; do
+            python3 "$migration"
+        done
 
         echo "=== Installing any new Python dependencies ==="
         pip3 install -r collectors/requirements.txt --break-system-packages 2>/dev/null \

@@ -11,6 +11,7 @@ import signal
 import sqlite3
 import sys
 from datetime import datetime
+from time_utils import utc_now
 
 from dotenv import load_dotenv
 
@@ -49,7 +50,6 @@ from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from config import DB_PATH, SCHEDULE, get_active_keywords
 from google_trends import collect_trends
 from keepa_collector import collect_products, detect_anomalies, bootstrap_products
-from tiktok_trends import collect_tiktok_trends
 from youtube_trends import collect_youtube_trends
 from alibaba_collector import collect_alibaba_suppliers
 from similarweb import collect_competitor_traffic
@@ -60,7 +60,6 @@ from etsy_discovery import discover_from_etsy
 from amazon_bestsellers import collect_amazon_bestsellers
 from pending_triage import triage_pending
 from pruner import prune_dead_keywords
-from amazon_pa import collect_amazon_products
 from telegram_bot import (
     send_daily_digest,
     send_discovery_digest,
@@ -132,7 +131,7 @@ def _write_health(name: str, success: bool, items: int, error):
     """Low-level health writer with row-count + status."""
     try:
         db = get_health_db()
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        now = utc_now().strftime("%Y-%m-%d %H:%M:%S")
         status = "success" if success else "failed"
         if success:
             db.execute(
@@ -345,11 +344,6 @@ def job_keepa():
     return (success, count, err)
 
 
-def job_tiktok():
-    logger.info("=== TikTok collection skipped (deprecated, see YouTube collector) ===")
-    return (True, 0, "deprecated")
-
-
 def job_youtube():
     logger.info("=== YouTube collection started ===")
     if not os.getenv("YOUTUBE_API_KEY"):
@@ -463,6 +457,11 @@ def job_amazon_bestsellers():
 
 def job_amazon_pa():
     logger.info("=== Amazon PA-API collection started ===")
+    # Lazy import keeps the deprecated amazon_paapi client out of scheduler
+    # startup. It remains an optional fallback until Creators API credentials
+    # are configured and the integration can be migrated.
+    from amazon_pa import collect_amazon_products
+
     success, count, err = run_collector_job("amazon_pa", collect_amazon_products)
     if success and count > 0:
         run_post_collection()
@@ -559,20 +558,6 @@ def build_scheduler() -> BlockingScheduler:
         id="keepa_bootstrap",
         name="Keepa Product Bootstrap",
         misfire_grace_time=7200,
-        coalesce=True,
-    )
-
-    # TikTok: daily at 8am HKT
-    scheduler.add_job(
-        job_tiktok,
-        CronTrigger(
-            hour=SCHEDULE["tiktok"]["hour"],
-            minute=SCHEDULE["tiktok"]["minute"],
-            timezone="Asia/Hong_Kong",
-        ),
-        id="tiktok",
-        name="TikTok Trends Collector",
-        misfire_grace_time=3600,
         coalesce=True,
     )
 

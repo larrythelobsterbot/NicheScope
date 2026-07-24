@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 from datetime import datetime
+from time_utils import utc_now
 
 import httpx
 
@@ -84,7 +85,7 @@ def format_daily_digest() -> str:
 
     db.close()
 
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    now = utc_now().strftime("%Y-%m-%d %H:%M UTC")
     categories = get_categories()
     lines = [
         f"<b>NicheScope Daily Digest</b>",

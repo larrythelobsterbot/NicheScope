@@ -1,15 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
-import { queryAll, execute } from "@/lib/db";
+import { queryAll, queryOne, execute } from "@/lib/db";
+
+function boundedInt(value: string | null, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, minimum), maximum) : fallback;
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const rising = searchParams.get("rising") === "true";
-  const limit = parseInt(searchParams.get("limit") || "20", 10);
-  const all = searchParams.get("all") === "true";
+  const limit = boundedInt(searchParams.get("limit"), 20, 1, 100);
+  const admin = searchParams.get("admin") === "true";
 
   try {
-    // Admin mode: return all keywords regardless of trend data
-    if (all) {
+    if (admin) {
+      const page = boundedInt(searchParams.get("page"), 1, 1, 1_000_000);
+      const pageSize = boundedInt(searchParams.get("page_size"), 100, 1, 200);
+      const search = (searchParams.get("search") || "").trim().toLowerCase();
+      const category = (searchParams.get("category") || "").trim().toLowerCase();
+      const where: string[] = [];
+      const params: unknown[] = [];
+
+      if (search) {
+        where.push("(LOWER(keyword) LIKE ? OR LOWER(category) LIKE ? OR LOWER(COALESCE(subcategory, '')) LIKE ?)");
+        const term = `%${search}%`;
+        params.push(term, term, term);
+      }
+      if (category) {
+        where.push("category = ?");
+        params.push(category);
+      }
+
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const count = await queryOne<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt FROM keywords ${whereSql}`,
+        params,
+      );
+      const total = count?.cnt || 0;
+      const totalPages = Math.max(Math.ceil(total / pageSize), 1);
+      const safePage = Math.min(page, totalPages);
+      const offset = (safePage - 1) * pageSize;
       const rows = await queryAll<{
         id: number;
         keyword: string;
@@ -19,14 +49,20 @@ export async function GET(request: NextRequest) {
       }>(
         `SELECT id, keyword, category, subcategory, is_active
          FROM keywords
-         ORDER BY category, keyword`
+         ${whereSql}
+         ORDER BY category, keyword
+         LIMIT ? OFFSET ?`,
+        [...params, pageSize, offset],
       );
 
       return NextResponse.json({
-        keywords: rows.map((r) => ({
-          ...r,
-          is_active: r.is_active === 1,
-        })),
+        keywords: rows.map((row) => ({ ...row, is_active: row.is_active === 1 })),
+        pagination: {
+          page: safePage,
+          page_size: pageSize,
+          total,
+          total_pages: totalPages,
+        },
       });
     }
 

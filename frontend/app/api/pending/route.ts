@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { queryAll, execute } from "@/lib/db";
+import { queryAll, queryOne, execute } from "@/lib/db";
 
-export async function GET() {
+function boundedInt(value: string | null, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, minimum), maximum) : fallback;
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const requestedPage = boundedInt(searchParams.get("page"), 1, 1, 1_000_000);
+  const pageSize = boundedInt(searchParams.get("page_size"), 100, 1, 200);
+
   try {
+    const count = await queryOne<{ cnt: number }>(
+      "SELECT COUNT(*) AS cnt FROM pending_keywords WHERE status = 'pending'",
+    );
+    const total = count?.cnt || 0;
+    const totalPages = Math.max(Math.ceil(total / pageSize), 1);
+    const page = Math.min(requestedPage, totalPages);
+    const offset = (page - 1) * pageSize;
     const pending = await queryAll<{
       id: number;
       keyword: string;
@@ -17,13 +33,21 @@ export async function GET() {
               relevance_score, discovered_at, status
        FROM pending_keywords
        WHERE status = 'pending'
-       ORDER BY relevance_score DESC, discovered_at DESC`
+       ORDER BY relevance_score DESC, discovered_at DESC
+       LIMIT ? OFFSET ?`,
+      [pageSize, offset],
     );
 
-    return NextResponse.json({ pending });
+    return NextResponse.json({
+      pending,
+      pagination: { page, page_size: pageSize, total, total_pages: totalPages },
+    });
   } catch (error) {
     console.error("Pending keywords API error:", error);
-    return NextResponse.json({ error: "Failed to fetch pending keywords", pending: [] }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to fetch pending keywords", pending: [] },
+      { status: 500 },
+    );
   }
 }
 

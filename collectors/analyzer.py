@@ -6,6 +6,7 @@ import json
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from time_utils import utc_now
 
 from config import DB_PATH, SCORE_WEIGHTS, ALERT_THRESHOLDS, get_active_keywords, get_categories
 
@@ -156,7 +157,7 @@ def compute_all_metrics() -> dict:
         cursor.execute("SELECT id, keyword, category FROM keywords WHERE is_active = 1")
         keywords = {r["id"]: r for r in cursor.fetchall()}
 
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = utc_now().isoformat(timespec="seconds")
         metrics = {}
         persist = True
         for kid, kw in keywords.items():
@@ -251,7 +252,7 @@ def _classify_severity(velocity: float) -> str:
 
 def calculate_niche_scores():
     """Calculate composite niche scores for each category."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_now().strftime("%Y-%m-%d")
     scores = {}
 
     with get_db() as db:

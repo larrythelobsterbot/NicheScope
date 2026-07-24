@@ -7,6 +7,10 @@ interface PendingKeywordsProps {
   pending: PendingKeyword[];
   colorMap: Record<string, string>;
   onAction: (id: number, action: "approve" | "reject") => void;
+  page: number;
+  total: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
 }
 
 type SourceFilter = "all" | "google_category" | "google_related" | "amazon_movers";
@@ -18,7 +22,15 @@ const SOURCE_LABELS: Record<string, string> = {
   amazon_movers: "Amazon Movers",
 };
 
-export default function PendingKeywords({ pending, colorMap, onAction }: PendingKeywordsProps) {
+export default function PendingKeywords({
+  pending,
+  colorMap,
+  onAction,
+  page,
+  total,
+  totalPages,
+  onPageChange,
+}: PendingKeywordsProps) {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -82,6 +94,9 @@ export default function PendingKeywords({ pending, colorMap, onAction }: Pending
 
   return (
     <div className="space-y-3">
+      <div className="text-[10px] text-slate-600">
+        Showing the highest-scoring 100 items on this page. Filters apply to the current page.
+      </div>
       {/* Source filter */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {(Object.keys(SOURCE_LABELS) as SourceFilter[]).map((key) => {
@@ -226,6 +241,28 @@ export default function PendingKeywords({ pending, colorMap, onAction }: Pending
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-slate-500 pt-2">
+        <span>
+          {total.toLocaleString()} pending · page {page} of {totalPages}
+        </span>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onPageChange(page - 1)}
+            disabled={page <= 1}
+            className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Previous
+          </button>
+          <button
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+            className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Next
+          </button>
+        </div>
       </div>
     </div>
   );

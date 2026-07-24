@@ -13,6 +13,7 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from time_utils import utc_now
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -132,7 +133,7 @@ def collect_youtube_trends(budget_override=None):
     conn.execute("PRAGMA busy_timeout=30000")
     cursor = conn.cursor()
     total_written = 0
-    collected_at = datetime.utcnow().isoformat(timespec="seconds")
+    collected_at = utc_now().isoformat(timespec="seconds")
 
     for kw_id, keyword in keywords:
         try:

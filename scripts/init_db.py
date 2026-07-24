@@ -183,7 +183,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_product_history_product_date ON product_history(product_id, date);
         CREATE INDEX IF NOT EXISTS idx_niche_scores_category_date ON niche_scores(category, date);
         CREATE INDEX IF NOT EXISTS idx_alerts_type_sent ON alerts(type, sent_at);
-        CREATE INDEX IF NOT EXISTS idx_tiktok_trends_keyword_date ON tiktok_trends(keyword, date);
         CREATE INDEX IF NOT EXISTS idx_keywords_category ON keywords(category);
         CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
     """)

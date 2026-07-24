@@ -20,6 +20,7 @@ Schema (added to init_db.py):
 import sqlite3
 import logging
 from datetime import datetime
+from time_utils import utc_now
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def record_keyword_decision(keyword: str, decision: str):
 
         source = row["source"] or "unknown"
         parent = row["parent_keyword"] or ""
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        now = utc_now().strftime("%Y-%m-%d %H:%M:%S")
 
         if decision == "approved":
             db.execute("""

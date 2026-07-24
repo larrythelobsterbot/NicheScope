@@ -14,6 +14,20 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+def _is_reloadable_project_module(name, module, collectors_dir: Path = ROOT / "collectors") -> bool:
+    """Accept importable project modules, never virtualenv launchers/packages."""
+    module_file = getattr(module, "__file__", None)
+    if not module_file or name == "__main__" or getattr(module, "__spec__", None) is None:
+        return False
+
+    try:
+        path = Path(module_file).resolve()
+        project_root = collectors_dir.resolve()
+        return path.is_relative_to(project_root) and not path.is_relative_to(project_root / "venv")
+    except (OSError, ValueError):
+        return False
+
+
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     """A fresh SQLite DB with NicheScope schema + all migrations applied."""
@@ -39,14 +53,10 @@ def temp_db(tmp_path, monkeypatch):
     if "config" in sys.modules:
         importlib.reload(sys.modules["config"])
 
-    collectors_dir = str(ROOT / "collectors")
     for name, module in list(sys.modules.items()):
         if name == "config":
             continue
-        module_file = getattr(module, "__file__", None) or ""
-        # Only reload NicheScope's own modules — not third-party packages
-        # installed in a venv that happens to live under collectors/.
-        if module_file.startswith(collectors_dir) and "site-packages" not in module_file:
+        if _is_reloadable_project_module(name, module):
             importlib.reload(module)
 
     return str(db_path)

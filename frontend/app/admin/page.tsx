@@ -30,36 +30,81 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>("keywords");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [keywordSearch, setKeywordSearch] = useState("");
+  const [keywordPage, setKeywordPage] = useState(1);
+  const [keywordTotal, setKeywordTotal] = useState(0);
+  const [keywordTotalPages, setKeywordTotalPages] = useState(1);
+  const [pendingPage, setPendingPage] = useState(1);
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [pendingTotalPages, setPendingTotalPages] = useState(1);
 
-  const fetchData = useCallback(async () => {
+  const fetchCategories = useCallback(async () => {
     try {
-      const [catRes, pendingRes] = await Promise.all([
-        fetch("/api/categories"),
-        fetch("/api/pending"),
-      ]);
-
-      const catData = await catRes.json();
-      const pendingData = await pendingRes.json();
-
-      const cats = catData.categories || [];
-      setCategories(cats);
-      setColorMap(getCategoryColorMap(cats));
-      setPending(pendingData.pending || []);
-
-      // Fetch all keywords for the admin keyword table
-      const kwRes = await fetch("/api/keywords?all=true");
-      const kwData = await kwRes.json();
-      setKeywords(kwData.keywords || []);
+      const response = await fetch("/api/categories", { cache: "no-store" });
+      if (!response.ok) throw new Error(`Categories request failed: ${response.status}`);
+      const data = await response.json();
+      const nextCategories = data.categories || [];
+      setCategories(nextCategories);
+      setColorMap(getCategoryColorMap(nextCategories));
     } catch (error) {
-      console.error("Failed to fetch admin data:", error);
-    } finally {
-      setLoading(false);
+      console.error("Failed to fetch categories:", error);
     }
   }, []);
 
+  const fetchKeywords = useCallback(async () => {
+    const params = new URLSearchParams({
+      admin: "true",
+      page: String(keywordPage),
+      page_size: "100",
+    });
+    if (keywordSearch.trim()) params.set("search", keywordSearch.trim());
+    if (selectedCategory) params.set("category", selectedCategory);
+
+    try {
+      const response = await fetch(`/api/keywords?${params}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`Keywords request failed: ${response.status}`);
+      const data = await response.json();
+      setKeywords(data.keywords || []);
+      setKeywordTotal(data.pagination?.total || 0);
+      setKeywordTotalPages(data.pagination?.total_pages || 1);
+      if (data.pagination?.page && data.pagination.page !== keywordPage) {
+        setKeywordPage(data.pagination.page);
+      }
+    } catch (error) {
+      console.error("Failed to fetch keywords:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [keywordPage, keywordSearch, selectedCategory]);
+
+  const fetchPending = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/pending?page=${pendingPage}&page_size=100`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`Pending request failed: ${response.status}`);
+      const data = await response.json();
+      setPending(data.pending || []);
+      setPendingTotal(data.pagination?.total || 0);
+      setPendingTotalPages(data.pagination?.total_pages || 1);
+      if (data.pagination?.page && data.pagination.page !== pendingPage) {
+        setPendingPage(data.pagination.page);
+      }
+    } catch (error) {
+      console.error("Failed to fetch pending keywords:", error);
+    }
+  }, [pendingPage]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([fetchCategories(), fetchKeywords(), fetchPending()]);
+  }, [fetchCategories, fetchKeywords, fetchPending]);
+
+  useEffect(() => void fetchCategories(), [fetchCategories]);
+  useEffect(() => void fetchPending(), [fetchPending]);
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    const timer = window.setTimeout(() => void fetchKeywords(), 250);
+    return () => window.clearTimeout(timer);
+  }, [fetchKeywords]);
 
   const handleAddKeyword = async (keyword: string, category: string) => {
     try {
@@ -68,7 +113,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keyword, category }),
       });
-      fetchData();
+      await fetchKeywords();
     } catch (error) {
       console.error("Failed to add keyword:", error);
     }
@@ -81,7 +126,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keyword, is_active: active }),
       });
-      fetchData();
+      await fetchKeywords();
     } catch (error) {
       console.error("Failed to toggle keyword:", error);
     }
@@ -94,7 +139,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, action }),
       });
-      fetchData();
+      await Promise.all([fetchPending(), fetchKeywords()]);
     } catch (error) {
       console.error("Failed to process pending keyword:", error);
     }
@@ -131,23 +176,19 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      fetchData();
+      await Promise.all([fetchCategories(), fetchKeywords()]);
     } catch (error) {
       console.error("Failed to add category:", error);
     }
   };
 
   const tabs = [
-    { key: "keywords" as const, label: "Watchlist", count: keywords.length },
-    { key: "pending" as const, label: "Pending", count: pending.length },
+    { key: "keywords" as const, label: "Watchlist", count: keywordTotal },
+    { key: "pending" as const, label: "Pending", count: pendingTotal },
     { key: "paste" as const, label: "Paste Import", count: 0 },
     { key: "import" as const, label: "CSV Import", count: 0 },
     { key: "collectors" as const, label: "Collectors", count: 0 },
   ];
-
-  const filteredKeywords = selectedCategory
-    ? keywords.filter((k) => k.category === selectedCategory)
-    : keywords;
 
   return (
     <main className="min-h-screen p-4 md:p-6 lg:p-8 max-w-[1200px] mx-auto">
@@ -166,7 +207,7 @@ export default function AdminPage() {
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-600">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          {categories.length} categories | {keywords.length} keywords
+          {categories.length} categories | {keywordTotal.toLocaleString()} keywords
         </div>
       </header>
 
@@ -176,7 +217,10 @@ export default function AdminPage() {
           categories={categories}
           colorMap={colorMap}
           selected={selectedCategory}
-          onSelect={setSelectedCategory}
+          onSelect={(category) => {
+            setSelectedCategory(category);
+            setKeywordPage(1);
+          }}
           onAddCategory={handleAddCategory}
         />
       </div>
@@ -227,10 +271,19 @@ export default function AdminPage() {
           <>
             {activeTab === "keywords" && (
               <KeywordTable
-                keywords={filteredKeywords}
+                keywords={keywords}
                 colorMap={colorMap}
                 onToggle={handleToggleKeyword}
                 onAdd={handleAddKeyword}
+                search={keywordSearch}
+                onSearchChange={(value) => {
+                  setKeywordSearch(value);
+                  setKeywordPage(1);
+                }}
+                page={keywordPage}
+                total={keywordTotal}
+                totalPages={keywordTotalPages}
+                onPageChange={setKeywordPage}
               />
             )}
             {activeTab === "pending" && (
@@ -238,16 +291,20 @@ export default function AdminPage() {
                 pending={pending}
                 colorMap={colorMap}
                 onAction={handlePendingAction}
+                page={pendingPage}
+                total={pendingTotal}
+                totalPages={pendingTotalPages}
+                onPageChange={setPendingPage}
               />
             )}
             {activeTab === "paste" && (
               <ClipboardImport
                 categories={categories.map((c) => c.name)}
-                onImportComplete={fetchData}
+                onImportComplete={refreshAll}
               />
             )}
             {activeTab === "import" && (
-              <BulkImport onImportComplete={fetchData} />
+              <BulkImport onImportComplete={refreshAll} />
             )}
             {activeTab === "collectors" && (
               <CollectorStatus />

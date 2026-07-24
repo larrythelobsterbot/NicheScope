@@ -4,6 +4,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
+from time_utils import utc_now
 
 # API Keys (load from environment variables in production)
 KEEPA_API_KEY = os.getenv("KEEPA_API_KEY", "")
@@ -145,7 +146,7 @@ def get_keywords_due_for_collection():
         return [(kw, cat) for cat, kws in get_active_keywords().items() for kw in kws]
     conn.close()
 
-    now = datetime.utcnow()
+    now = utc_now()
     due = []
     for r in rows:
         cadence = COLLECTION_CADENCE.get(r["lifecycle"], COLLECTION_CADENCE_DEFAULT)
@@ -311,7 +312,6 @@ SCHEDULE = {
     "keepa": {"hours": 6},
     "keepa_bootstrap": {"day_of_week": "mon", "hour": 1},
     "amazon_pa": {"hour": 7, "minute": 0},
-    "tiktok": {"hour": 8, "minute": 0},
     "youtube": {"hour": 8, "minute": 0},
     "alibaba": {"day_of_week": "mon", "hour": 2},
     "daily_digest": {"hour": 9, "minute": 0},

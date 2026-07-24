@@ -5,6 +5,7 @@ import json
 import time
 import logging
 from datetime import datetime
+from time_utils import utc_now
 
 from pytrends.request import TrendReq
 
@@ -112,7 +113,7 @@ def collect_trends():
                         """INSERT OR REPLACE INTO trend_data
                            (keyword_id, date, interest_score, collected_at)
                            VALUES (?, ?, ?, ?)""",
-                        (keyword_id, date_str, int(score), datetime.utcnow().isoformat()),
+                        (keyword_id, date_str, int(score), utc_now().isoformat()),
                     )
                 total_collected += len(interest_df[keyword])
 

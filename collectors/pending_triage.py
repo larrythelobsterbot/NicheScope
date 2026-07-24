@@ -66,26 +66,41 @@ def _category_shares(cursor) -> dict:
     return {r["category"]: r["cnt"] / total for r in rows}
 
 
-def sweep_active_junk(days: int = 14) -> int:
-    """Deactivate junk among recently-added ACTIVE keywords.
+def sweep_active_junk(days: int | None = 14, apply: bool = True) -> int:
+    """Find or deactivate high-confidence junk among active keywords.
 
-    Safety net for paths that bypass the discovery filter — the dashboard's
-    bulk-import routes insert straight into `keywords`, so trash never meets
-    is_junk() until this sweep. Recently-added only, so a filter regression
-    can't mass-deactivate the long-standing watchlist in one night.
-    Returns the number deactivated.
+    The scheduled safety sweep keeps its conservative 14-day default. Passing
+    ``days=None`` audits the entire active watchlist, and ``apply=False`` makes
+    that audit read-only so historical cleanup can be reviewed before use.
+    Returns the number of rows matching the current high-confidence junk rules.
     """
     db = get_db()
-    rows = db.execute(
-        "SELECT id, keyword FROM keywords WHERE is_active = 1 "
-        "AND added_at >= datetime('now', ?)",
-        (f"-{int(days)} days",),
-    ).fetchall()
-    junk_ids = [(r["id"],) for r in rows if is_junk(r["keyword"])[0]]
-    if junk_ids:
+    if days is None:
+        rows = db.execute(
+            "SELECT id, keyword FROM keywords WHERE is_active = 1"
+        ).fetchall()
+        scope = "all-history"
+    else:
+        rows = db.execute(
+            "SELECT id, keyword FROM keywords WHERE is_active = 1 "
+            "AND added_at >= datetime('now', ?)",
+            (f"-{int(days)} days",),
+        ).fetchall()
+        scope = f"last-{int(days)}-days"
+
+    junk_ids = [(row["id"],) for row in rows if is_junk(row["keyword"])[0]]
+    if apply and junk_ids:
         db.executemany("UPDATE keywords SET is_active = 0 WHERE id = ?", junk_ids)
         db.commit()
-        logger.info(f"Active-junk sweep: deactivated {len(junk_ids)} of {len(rows)} recent keywords")
+
+    action = "deactivated" if apply else "would deactivate"
+    logger.info(
+        "Active-junk sweep (%s): %s %d of %d active keywords",
+        scope,
+        action,
+        len(junk_ids),
+        len(rows),
+    )
     db.close()
     return len(junk_ids)
 

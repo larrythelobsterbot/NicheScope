@@ -48,6 +48,11 @@ export default function Dashboard() {
   const [totalDataPoints, setTotalDataPoints] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
+  const [trendMeta, setTrendMeta] = useState<{
+    available_keywords: number;
+    returned_keywords: number;
+    truncated: boolean;
+  } | null>(null);
 
   const handleQuickAdd = async (keyword: string, category: string) => {
     await fetch("/api/keywords", {
@@ -59,12 +64,18 @@ export default function Dashboard() {
   };
 
   const fetchData = useCallback(async () => {
+    const trendParams = new URLSearchParams({
+      days: "90",
+      keyword_limit: "500",
+    });
+    if (selectedCategory) trendParams.set("category", selectedCategory);
+
     try {
       const [catRes, trendsRes, keywordsRes, healthRes] = await Promise.all([
-        fetch("/api/categories"),
-        fetch(`/api/trends?days=90${selectedCategory ? `&category=${selectedCategory}` : ""}`),
-        fetch("/api/keywords?rising=true&limit=20"),
-        fetch("/api/health").catch(() => null),
+        fetch("/api/categories", { cache: "no-store" }),
+        fetch(`/api/trends?${trendParams}`, { cache: "no-store" }),
+        fetch("/api/keywords?rising=true&limit=20", { cache: "no-store" }),
+        fetch("/api/health", { cache: "no-store" }).catch(() => null),
       ]);
 
       const catData = await catRes.json();
@@ -77,6 +88,7 @@ export default function Dashboard() {
 
       setTrends(trendsData.trends || []);
       setScores(trendsData.scores || []);
+      setTrendMeta(trendsData.meta || null);
       setRisingKeywords(keywordsData.keywords || []);
       setAlerts(keywordsData.alerts || []);
 
@@ -286,6 +298,12 @@ export default function Dashboard() {
           onChange={setSearchQuery}
           resultCount={sq ? filteredTrends.length : undefined}
         />
+        {trendMeta?.truncated && (
+          <p className="mt-1.5 text-[10px] text-slate-600">
+            Showing the top {trendMeta.returned_keywords.toLocaleString()} of{" "}
+            {trendMeta.available_keywords.toLocaleString()} tracked keywords for fast analysis.
+          </p>
+        )}
       </div>
 
       {/* Command center: decision KPIs + opportunity of the week + lifecycle */}
