@@ -28,3 +28,6 @@ def test_full_migration_chain_and_init_are_idempotent(temp_db):
 def test_deploy_runs_every_migration_on_first_run_and_update():
     deploy = (ROOT / "scripts" / "deploy.sh").read_text()
     assert deploy.count("for migration in scripts/migrate_*.py") == 2
+    assert deploy.count(
+        'DB_PATH="${DB_PATH:-data/nichescope.db}" python3 "$migration"'
+    ) == 2

@@ -143,7 +143,7 @@ ENVFILE
 
         echo "=== Running database migrations ==="
         for migration in scripts/migrate_*.py; do
-            python3 "$migration"
+            DB_PATH="${DB_PATH:-data/nichescope.db}" python3 "$migration"
         done
 
         echo "=== Making scripts executable ==="
@@ -231,7 +231,7 @@ update() {
 
         echo "=== Running database migrations ==="
         for migration in scripts/migrate_*.py; do
-            python3 "$migration"
+            DB_PATH="${DB_PATH:-data/nichescope.db}" python3 "$migration"
         done
 
         echo "=== Installing any new Python dependencies ==="
