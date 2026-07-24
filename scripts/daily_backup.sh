@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BACKUP_DIR="$PROJECT_ROOT/backups"
+BACKUP_DIR="$PROJECT_ROOT/data/backups"
 DB_PATH="$(env -u DB_PATH python3 "$SCRIPT_DIR/db_path.py")"
 TIMESTAMP="$(date +%Y%m%d)"
 BACKUP_FILE="$BACKUP_DIR/nichescope_${TIMESTAMP}.db"

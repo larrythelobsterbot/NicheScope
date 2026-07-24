@@ -148,7 +148,7 @@ def test_daily_backup_uses_resolved_dotenv_database(tmp_path):
         check=True,
     )
 
-    backups = list((project_root / "backups").glob("nichescope_*.db"))
+    backups = list((project_root / "data" / "backups").glob("nichescope_*.db"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as conn:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -200,7 +200,7 @@ def test_backup_setup_installs_project_relative_worker(tmp_path):
     )
     assert capture.read_text() == expected
     assert os.access(scripts_dir / "daily_backup.sh", os.X_OK)
-    assert (project_root / "backups").is_dir()
+    assert (project_root / "data" / "backups").is_dir()
     assert "/opt/nichescope" not in (
         ROOT / "scripts" / "setup_cron_backup.sh"
     ).read_text()
