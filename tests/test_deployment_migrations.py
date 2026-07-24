@@ -31,3 +31,10 @@ def test_deploy_runs_every_migration_on_first_run_and_update():
     assert deploy.count(
         'DB_PATH="${DB_PATH:-data/nichescope.db}" python3 "$migration"'
     ) == 2
+    assert (
+        "env -u NICHESCOPE_AUTH_USERNAME -u NICHESCOPE_AUTH_PASSWORD "
+        "pm2 startOrReload ecosystem.config.js --update-env"
+    ) in deploy
+    update_block = deploy.split("update() {", 1)[1].split("# NGINX + SSL SETUP", 1)[0]
+    assert "pm2 restart nichescope-web" not in update_block
+    assert "pm2 restart nichescope-collectors" not in update_block

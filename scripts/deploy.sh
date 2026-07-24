@@ -244,9 +244,8 @@ update() {
         npm run build
         cd ..
 
-        echo "=== Restarting all PM2 processes ==="
-        pm2 restart nichescope-web
-        pm2 restart nichescope-collectors
+        echo "=== Reloading PM2 definitions and protected environment ==="
+        env -u NICHESCOPE_AUTH_USERNAME -u NICHESCOPE_AUTH_PASSWORD pm2 startOrReload ecosystem.config.js --update-env
 
         echo "=== Current status ==="
         pm2 status
