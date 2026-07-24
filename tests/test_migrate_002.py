@@ -1,6 +1,8 @@
 """Test migration 002: content_trends schema."""
 import sqlite3
 
+import pytest  # pyright: ignore[reportMissingImports]
+
 from migrate_002_content_trends import migrate
 
 
@@ -60,6 +62,33 @@ def test_archives_legacy_tiktok_rows_without_mixing_sources(temp_db):
     ]
     assert content_count == 0
     assert object_type == "view"
+
+
+def test_archive_collision_fails_before_any_schema_mutation(temp_db):
+    conn = sqlite3.connect(temp_db)
+    conn.execute("CREATE TABLE tiktok_trends_legacy (sentinel TEXT)")
+    conn.execute("INSERT INTO tiktok_trends_legacy VALUES ('keep me')")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="Refusing to replace existing"):
+        migrate(temp_db)
+
+    conn = sqlite3.connect(temp_db)
+    objects = dict(
+        conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE name IN "
+            "('content_trends', 'tiktok_trends', 'tiktok_trends_legacy')"
+        ).fetchall()
+    )
+    sentinel = conn.execute("SELECT sentinel FROM tiktok_trends_legacy").fetchone()[0]
+    conn.close()
+
+    assert objects == {
+        "tiktok_trends": "table",
+        "tiktok_trends_legacy": "table",
+    }
+    assert sentinel == "keep me"
 
 
 def test_idempotent(temp_db):

@@ -16,6 +16,18 @@ import sys
 def migrate(db_path: str) -> None:
     conn = sqlite3.connect(db_path, timeout=30)
     try:
+        legacy_object = conn.execute(
+            "SELECT type FROM sqlite_master WHERE name='tiktok_trends'"
+        ).fetchone()
+        if legacy_object and legacy_object[0] == "table":
+            archive = conn.execute(
+                "SELECT type FROM sqlite_master WHERE name='tiktok_trends_legacy'"
+            ).fetchone()
+            if archive:
+                raise RuntimeError(
+                    "Refusing to replace existing tiktok_trends_legacy archive"
+                )
+
         # 1. Create the new table
         conn.executescript(
             """
@@ -41,19 +53,9 @@ def migrate(db_path: str) -> None:
         #    legacy TikTok observations are not destroyed or mixed into current
         #    YouTube-derived scores. If it's already a view, drop it so we can
         #    re-create it below.
-        row = conn.execute(
-            "SELECT type FROM sqlite_master WHERE name='tiktok_trends'"
-        ).fetchone()
-        if row and row[0] == "table":
-            archive = conn.execute(
-                "SELECT type FROM sqlite_master WHERE name='tiktok_trends_legacy'"
-            ).fetchone()
-            if archive:
-                raise RuntimeError(
-                    "Refusing to replace existing tiktok_trends_legacy archive"
-                )
+        if legacy_object and legacy_object[0] == "table":
             conn.execute("ALTER TABLE tiktok_trends RENAME TO tiktok_trends_legacy")
-        elif row and row[0] == "view":
+        elif legacy_object and legacy_object[0] == "view":
             conn.execute("DROP VIEW tiktok_trends")
 
         # 3. (Re)create the back-compat view — widened so that legacy analyzer SQL
