@@ -310,7 +310,7 @@ export default function Dashboard() {
       <OpportunityHeader onSelectCategory={handleSelectCategory} />
 
       {/* Main Layout: Sidebar + Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_320px] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)_320px] gap-6">
         {/* Left Sidebar: Niche Rankings */}
         <div className="space-y-3">
           <h2 className="text-[10px] text-slate-500 uppercase tracking-wider font-medium px-1">

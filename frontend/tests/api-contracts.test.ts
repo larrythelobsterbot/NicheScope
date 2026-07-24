@@ -42,3 +42,8 @@ test("trend route bounds the keyword set and reports truncation metadata", () =>
   assert.match(route, /truncated/);
   assert.match(route, /available_keywords/);
 });
+
+test("dashboard center grid track can shrink without forcing page overflow", () => {
+  const page = source("app/page.tsx");
+  assert.match(page, /lg:grid-cols-\[240px_minmax\(0,1fr\)_320px\]/);
+});
